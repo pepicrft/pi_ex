@@ -29,30 +29,53 @@ defmodule PiEx.Installer do
 
   @doc """
   Ensures the pi SDK is installed.
+
+  ## Options
+
+    * `:cache_dir` - Override the cache directory (default: from config)
+    * `:version` - Override the version (default: from config)
   """
-  @spec ensure_installed!() :: :ok
-  def ensure_installed! do
-    if Config.installed?() do
+  @spec ensure_installed!(keyword()) :: :ok
+  def ensure_installed!(opts \\ []) do
+    if installed?(opts) do
       :ok
     else
-      case install() do
+      case install(opts) do
         :ok -> :ok
         {:error, reason} -> raise "Failed to install pi SDK: #{inspect(reason)}"
       end
     end
   end
 
-  @spec installed?() :: boolean()
-  defdelegate installed?, to: Config
+  @doc """
+  Checks if the SDK is installed.
 
-  @spec install() :: :ok | {:error, term()}
-  def install, do: install(Config.version())
+  ## Options
 
-  @spec install(String.t()) :: :ok | {:error, term()}
-  def install(version) do
-    package_dir = Config.package_path()
+    * `:cache_dir` - Override the cache directory
+    * `:version` - Override the version
+  """
+  @spec installed?(keyword()) :: boolean()
+  def installed?(opts \\ []) do
+    opts
+    |> node_modules_path()
+    |> File.exists?()
+  end
 
-    if Config.installed?() do
+  @doc """
+  Installs the pi SDK.
+
+  ## Options
+
+    * `:cache_dir` - Override the cache directory (default: from config)
+    * `:version` - Override the version (default: from config)
+  """
+  @spec install(keyword()) :: :ok | {:error, term()}
+  def install(opts \\ []) do
+    version = Keyword.get(opts, :version, Config.version())
+    package_dir = package_path(opts)
+
+    if installed?(opts) do
       Logger.debug("Pi SDK #{version} already installed")
       :ok
     else
@@ -113,19 +136,31 @@ defmodule PiEx.Installer do
     end
   end
 
-  @spec uninstall() :: :ok
-  def uninstall, do: uninstall(Config.version())
+  @doc """
+  Uninstalls the pi SDK.
 
-  @spec uninstall(String.t()) :: :ok
-  def uninstall(version) do
-    package_dir = Path.join(Config.cache_dir(), "pi-coding-agent-#{version}")
+  ## Options
+
+    * `:cache_dir` - Override the cache directory
+    * `:version` - Override the version
+  """
+  @spec uninstall(keyword()) :: :ok
+  def uninstall(opts \\ []) do
+    package_dir = package_path(opts)
     if File.exists?(package_dir), do: File.rm_rf!(package_dir)
     :ok
   end
 
-  @spec list_installed() :: [String.t()]
-  def list_installed do
-    cache_dir = Config.cache_dir()
+  @doc """
+  Lists installed SDK versions.
+
+  ## Options
+
+    * `:cache_dir` - Override the cache directory
+  """
+  @spec list_installed(keyword()) :: [String.t()]
+  def list_installed(opts \\ []) do
+    cache_dir = Keyword.get(opts, :cache_dir, Config.cache_dir())
 
     if File.exists?(cache_dir) do
       cache_dir
@@ -137,4 +172,10 @@ defmodule PiEx.Installer do
       []
     end
   end
+
+  # Helper to compute paths from options
+  defp cache_dir(opts), do: Keyword.get(opts, :cache_dir, Config.cache_dir())
+  defp version(opts), do: Keyword.get(opts, :version, Config.version())
+  defp package_path(opts), do: Path.join(cache_dir(opts), "pi-coding-agent-#{version(opts)}")
+  defp node_modules_path(opts), do: Path.join(package_path(opts), "node_modules")
 end
