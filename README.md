@@ -97,16 +97,19 @@ All callbacks are optional - default implementations pass through without action
 
 | Callback | Event |
 |----------|-------|
+| `agent_init/1` | Initialize agent state |
+| `tools/0` | Return list of custom tools |
 | `handle_text_delta/2` | Streaming text from assistant |
+| `handle_thinking_delta/2` | Streaming thinking output |
 | `handle_tool_start/2` | Tool execution starting |
+| `handle_tool_update/2` | Tool output streaming |
 | `handle_tool_end/2` | Tool execution complete |
-| `handle_tool_use/2` | Tool was invoked |
 | `handle_turn_start/2` | Agent turn starting |
 | `handle_turn_end/2` | Agent turn complete |
 | `handle_agent_start/2` | Agent started processing |
 | `handle_agent_end/2` | Agent finished |
-| `handle_input_request/2` | Agent requests input |
-| `handle_message/2` | Generic message |
+| `handle_message_start/2` | Message starting |
+| `handle_message_end/2` | Message complete |
 | `handle_error/2` | Error occurred |
 
 Each callback receives `(event_map, state)` and returns `{:noreply, state}` or `{:stop, reason, state}`.
@@ -131,17 +134,19 @@ defmodule DatabaseQueryTool do
   @behaviour PiEx.Tool
 
   @impl true
-  def definition do
+  def name, do: "database_query"
+
+  @impl true
+  def description, do: "Execute a database query"
+
+  @impl true
+  def parameters do
     %{
-      name: "database_query",
-      description: "Execute a database query",
-      parameters: %{
-        "type" => "object",
-        "properties" => %{
-          "sql" => %{"type" => "string", "description" => "SQL query"}
-        },
-        "required" => ["sql"]
-      }
+      "type" => "object",
+      "properties" => %{
+        "sql" => %{"type" => "string", "description" => "SQL query"}
+      },
+      "required" => ["sql"]
     }
   end
 
@@ -153,13 +158,13 @@ defmodule DatabaseQueryTool do
 end
 ```
 
-Or inline with a struct:
+Or inline with `PiEx.Tool.new/1`:
 
 ```elixir
 @impl true
 def tools do
   [
-    %PiEx.Tool{
+    PiEx.Tool.new(
       name: "get_weather",
       description: "Get current weather",
       parameters: %{
@@ -168,10 +173,10 @@ def tools do
           "city" => %{"type" => "string"}
         }
       },
-      handler: fn %{"city" => city}, _ctx ->
+      execute: fn %{"city" => city}, _ctx ->
         {:ok, WeatherAPI.get(city)}
       end
-    }
+    )
   ]
 end
 ```
@@ -211,24 +216,6 @@ MyAgent.start_link(
   # GenServer name
   name: MyApp.Agent
 )
-```
-
-## Low-Level API
-
-For more control, use `PiEx.Session` directly:
-
-```elixir
-{:ok, session} = PiEx.Session.start_link(
-  api_key: System.get_env("ANTHROPIC_API_KEY")
-)
-
-PiEx.Session.subscribe(session)
-PiEx.Session.prompt(session, "Hello!")
-
-receive do
-  {:pi_event, %PiEx.Event.TextDelta{delta: text}} ->
-    IO.write(text)
-end
 ```
 
 ## How It Works

@@ -1,11 +1,7 @@
 defmodule PiEx.Session do
-  @moduledoc """
-  GenServer managing a pi coding agent session in QuickBEAM.
-
-  The session runs the pi SDK directly inside QuickBEAM with:
-  - `apis: [:node]` for Node.js compatibility (fs, path, os, process, etc.)
-  - `:script` option to auto-bundle the bridge TypeScript with npm imports
-  """
+  @moduledoc false
+  # Internal GenServer managing a pi coding agent session in QuickBEAM.
+  # Use PiEx.Agent for the public API.
 
   use GenServer
 
