@@ -83,41 +83,9 @@ defmodule PiEx.Installer do
 
     try do
       File.cd!(package_dir)
-
-      # Try npm_ex first, fall back to CLI if it fails (e.g., due to version conflicts)
-      case NPM.install() do
-        :ok ->
-          :ok
-
-        {:error, _reason} ->
-          Logger.debug("npm_ex failed, falling back to CLI...")
-          install_via_cli(package_dir)
-      end
+      NPM.install()
     after
       File.cd!(original_cwd)
-    end
-  end
-
-  defp install_via_cli(package_dir) do
-    cond do
-      System.find_executable("pnpm") ->
-        run_cli("pnpm", ["install"], package_dir)
-
-      System.find_executable("npm") ->
-        run_cli("npm", ["install"], package_dir)
-
-      System.find_executable("yarn") ->
-        run_cli("yarn", ["install"], package_dir)
-
-      true ->
-        {:error, :no_package_manager}
-    end
-  end
-
-  defp run_cli(cmd, args, cwd) do
-    case System.cmd(cmd, args, cd: cwd, stderr_to_stdout: true) do
-      {_output, 0} -> :ok
-      {output, code} -> {:error, {cmd, code, output}}
     end
   end
 
