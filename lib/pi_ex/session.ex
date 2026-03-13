@@ -267,11 +267,12 @@ defmodule PiEx.Session do
 
     # QuickBEAM will:
     # 1. Provide Node.js APIs via apis: [:node]
-    # 2. Auto-bundle bridge.ts with npm imports resolved
+    # 2. Auto-bundle bridge.ts with npm imports from node_modules
     # 3. Execute the script in the runtime
     {:ok, runtime} = QuickBEAM.start(
       apis: [:node],
       script: Config.bridge_path(),
+      node_modules: Config.node_modules_path(),
       handlers: handlers,
       cwd: state.cwd
     )

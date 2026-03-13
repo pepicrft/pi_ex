@@ -91,19 +91,19 @@ defmodule PiEx.Config do
   end
 
   @doc """
-  Returns the path to the bridge script.
+  Returns the path to the bridge script in priv.
   """
   @spec bridge_path() :: String.t()
   def bridge_path do
-    Path.join(package_path(), "bridge.ts")
+    Path.join([:code.priv_dir(:pi_ex), "js", "bridge.ts"])
   end
 
   @doc """
-  Returns the path to the main entry point of the pi package.
+  Returns the path to the node_modules directory.
   """
-  @spec entry_point() :: String.t()
-  def entry_point do
-    Path.join([package_path(), "node_modules", "@mariozechner", "pi-coding-agent", "dist", "index.js"])
+  @spec node_modules_path() :: String.t()
+  def node_modules_path do
+    Path.join(package_path(), "node_modules")
   end
 
   @doc """
@@ -111,7 +111,7 @@ defmodule PiEx.Config do
   """
   @spec installed?() :: boolean()
   def installed? do
-    File.exists?(bridge_path()) and File.exists?(entry_point())
+    File.exists?(node_modules_path())
   end
 
   @doc """

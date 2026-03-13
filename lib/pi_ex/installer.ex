@@ -48,8 +48,7 @@ defmodule PiEx.Installer do
 
     File.mkdir_p!(package_dir)
 
-    with :ok <- copy_bridge_file(package_dir),
-         :ok <- create_package_json(package_dir, version),
+    with :ok <- create_package_json(package_dir, version),
          :ok <- install_npm_deps(package_dir) do
       Logger.info("Successfully installed pi coding agent #{version}")
       :ok
@@ -58,19 +57,6 @@ defmodule PiEx.Installer do
         Logger.error("Failed to install pi SDK: #{inspect(reason)}")
         File.rm_rf(package_dir)
         error
-    end
-  end
-
-  defp copy_bridge_file(package_dir) do
-    priv_dir = :code.priv_dir(:pi_ex) |> to_string()
-    bridge_src = Path.join([priv_dir, "js", "bridge.ts"])
-    bridge_dest = Path.join(package_dir, "bridge.ts")
-
-    if File.exists?(bridge_src) do
-      File.cp!(bridge_src, bridge_dest)
-      :ok
-    else
-      {:error, :bridge_file_not_found}
     end
   end
 

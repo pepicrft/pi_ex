@@ -5,13 +5,12 @@ defmodule PiEx.InstallerTest do
   alias PiEx.{Config, Installer}
 
   describe "installed?/0" do
-    test "returns true when bridge and entry point exist" do
-      # installed? calls File.exists? twice (bridge_path and entry_point)
+    test "returns true when node_modules exists" do
       stub(File, :exists?, fn _path -> true end)
       assert Installer.installed?()
     end
 
-    test "returns false when files don't exist" do
+    test "returns false when node_modules doesn't exist" do
       stub(File, :exists?, fn _path -> false end)
       refute Installer.installed?()
     end
