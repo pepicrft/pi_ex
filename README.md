@@ -31,30 +31,45 @@ mix pi_ex.install
 
 ## Quick Start
 
+Define an agent by implementing the `PiEx.Agent` behaviour:
+
 ```elixir
-# Start a session
-{:ok, session} = PiEx.start_session(
-  api_key: System.get_env("ANTHROPIC_API_KEY"),
-  provider: :anthropic
+defmodule MyAgent do
+  use PiEx.Agent
+
+  @impl true
+  def agent_init(_opts) do
+    {:ok, %{output: []}}
+  end
+
+  @impl true
+  def handle_text_delta(%{delta: text}, state) do
+    IO.write(text)
+    {:noreply, %{state | output: [text | state.output]}}
+  end
+
+  @impl true
+  def handle_tool_start(%{tool_name: name}, state) do
+    IO.puts("\n[Using #{name}...]")
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_agent_end(_event, state) do
+    IO.puts("\n[Done]")
+    {:noreply, state}
+  end
+end
+```
+
+Start and use your agent:
+
+```elixir
+{:ok, agent} = MyAgent.start_link(
+  api_key: System.get_env("ANTHROPIC_API_KEY")
 )
 
-# Subscribe to events
-PiEx.subscribe(session)
-
-# Send a prompt
-:ok = PiEx.prompt(session, "What files are in the current directory?")
-
-# Receive streaming events
-receive do
-  {:pi_event, %PiEx.Event.TextDelta{delta: text}} ->
-    IO.write(text)
-    
-  {:pi_event, %PiEx.Event.ToolStart{tool_name: name}} ->
-    IO.puts("\n[Using #{name}...]")
-    
-  {:pi_event, %PiEx.Event.AgentEnd{}} ->
-    IO.puts("\n[Done]")
-end
+MyAgent.prompt(agent, "What files are in the current directory?")
 ```
 
 ## Configuration
@@ -62,10 +77,10 @@ end
 ```elixir
 # config/config.exs
 config :pi_ex,
-  # Pi coding agent version (required)
+  # Pi coding agent version
   version: "0.57.1",
-  
-  # Cache directory for npm packages (optional)
+
+  # Cache directory for npm packages (optional, follows XDG)
   cache_dir: "~/.cache/pi_ex"
 ```
 
@@ -76,159 +91,154 @@ export PI_EX_VERSION=0.57.1
 export PI_EX_CACHE_DIR=~/.cache/pi_ex
 ```
 
-## Session Options
+## Agent Callbacks
 
-```elixir
-{:ok, session} = PiEx.start_session(
-  # Authentication
-  api_key: "sk-ant-...",          # API key (or use env var)
-  provider: :anthropic,            # :anthropic, :openai, etc.
-  
-  # Model configuration
-  model: "claude-sonnet-4-20250514",
-  thinking_level: :medium,         # :off, :minimal, :low, :medium, :high, :xhigh
-  
-  # Working directory
-  cwd: "/path/to/project",
-  
-  # Custom system prompt
-  system_prompt: "You are a helpful assistant.",
-  
-  # Custom tools (see below)
-  custom_tools: [my_tool],
-  
-  # GenServer name
-  name: MyApp.Agent
-)
-```
+All callbacks are optional - default implementations pass through without action.
 
-## Events
+| Callback | Event |
+|----------|-------|
+| `handle_text_delta/2` | Streaming text from assistant |
+| `handle_tool_start/2` | Tool execution starting |
+| `handle_tool_end/2` | Tool execution complete |
+| `handle_tool_use/2` | Tool was invoked |
+| `handle_turn_start/2` | Agent turn starting |
+| `handle_turn_end/2` | Agent turn complete |
+| `handle_agent_start/2` | Agent started processing |
+| `handle_agent_end/2` | Agent finished |
+| `handle_input_request/2` | Agent requests input |
+| `handle_message/2` | Generic message |
+| `handle_error/2` | Error occurred |
 
-Subscribe to receive streaming events:
-
-```elixir
-ref = PiEx.subscribe(session)
-
-# Events are delivered as {:pi_event, event} messages
-receive do
-  {:pi_event, event} -> handle_event(event)
-end
-
-# Event types:
-# - PiEx.Event.TextDelta - Streaming text from assistant
-# - PiEx.Event.ThinkingDelta - Thinking output
-# - PiEx.Event.ToolStart - Tool execution starting
-# - PiEx.Event.ToolUpdate - Tool output streaming
-# - PiEx.Event.ToolEnd - Tool execution complete
-# - PiEx.Event.MessageStart / MessageEnd
-# - PiEx.Event.TurnStart / TurnEnd
-# - PiEx.Event.AgentStart / AgentEnd
-```
+Each callback receives `(event_map, state)` and returns `{:noreply, state}` or `{:stop, reason, state}`.
 
 ## Custom Tools
 
 Define tools that the agent can use:
 
 ```elixir
-db_query_tool = PiEx.Tool.new(
-  name: "database_query",
-  description: "Execute a database query",
-  parameters: %{
-    "type" => "object",
-    "properties" => %{
-      "sql" => %{
-        "type" => "string",
-        "description" => "The SQL query to execute"
-      }
-    },
-    "required" => ["sql"]
-  },
-  handler: fn %{"sql" => sql}, _context ->
-    result = MyRepo.query!(sql)
-    {:ok, %{rows: result.rows, columns: result.columns}}
-  end
-)
+defmodule MyAgent do
+  use PiEx.Agent
 
-{:ok, session} = PiEx.start_session(
-  custom_tools: [db_query_tool]
-)
+  @impl true
+  def tools do
+    [DatabaseQueryTool]
+  end
+
+  # ... callbacks
+end
+
+defmodule DatabaseQueryTool do
+  @behaviour PiEx.Tool
+
+  @impl true
+  def definition do
+    %{
+      name: "database_query",
+      description: "Execute a database query",
+      parameters: %{
+        "type" => "object",
+        "properties" => %{
+          "sql" => %{"type" => "string", "description" => "SQL query"}
+        },
+        "required" => ["sql"]
+      }
+    }
+  end
+
+  @impl true
+  def execute(%{"sql" => sql}, _context) do
+    result = MyRepo.query!(sql)
+    {:ok, %{rows: result.rows}}
+  end
+end
+```
+
+Or inline with a struct:
+
+```elixir
+@impl true
+def tools do
+  [
+    %PiEx.Tool{
+      name: "get_weather",
+      description: "Get current weather",
+      parameters: %{
+        "type" => "object",
+        "properties" => %{
+          "city" => %{"type" => "string"}
+        }
+      },
+      handler: fn %{"city" => city}, _ctx ->
+        {:ok, WeatherAPI.get(city)}
+      end
+    }
+  ]
+end
 ```
 
 ## Supervision
 
-Sessions can be supervised for automatic restart:
+Agents are GenServers and can be supervised:
 
 ```elixir
 children = [
-  {PiEx.Session,
+  {MyAgent,
     name: MyApp.Agent,
-    api_key: System.get_env("ANTHROPIC_API_KEY"),
-    cwd: "/app/workspace"
+    api_key: System.get_env("ANTHROPIC_API_KEY")
   }
 ]
 
 Supervisor.start_link(children, strategy: :one_for_one)
 ```
 
-## API Reference
-
-### Session Management
+## Agent Options
 
 ```elixir
-# Start a session
-{:ok, session} = PiEx.start_session(opts)
+MyAgent.start_link(
+  # Authentication
+  api_key: "sk-ant-...",
+  provider: :anthropic,            # :anthropic, :openai, etc.
 
-# Stop a session
-PiEx.stop(session)
+  # Model configuration
+  model: "claude-sonnet-4-20250514",
 
-# Start a new conversation (clears history)
-PiEx.new_session(session)
+  # Working directory
+  cwd: "/path/to/project",
+
+  # System prompt
+  system_prompt: "You are a helpful assistant.",
+
+  # GenServer name
+  name: MyApp.Agent
+)
 ```
 
-### Prompting
+## Low-Level API
+
+For more control, use `PiEx.Session` directly:
 
 ```elixir
-# Send a prompt and wait for completion
-:ok = PiEx.prompt(session, "Hello!")
+{:ok, session} = PiEx.Session.start_link(
+  api_key: System.get_env("ANTHROPIC_API_KEY")
+)
 
-# Interrupt with a steering message (during streaming)
-PiEx.steer(session, "Stop and do this instead")
+PiEx.Session.subscribe(session)
+PiEx.Session.prompt(session, "Hello!")
 
-# Queue a follow-up (delivered after agent finishes)
-PiEx.follow_up(session, "After that, also check...")
-
-# Abort current operation
-PiEx.abort(session)
-```
-
-### State
-
-```elixir
-# Check if agent is streaming
-PiEx.streaming?(session)
-
-# Get message history
-messages = PiEx.messages(session)
-
-# Change model
-PiEx.set_model(session, "claude-opus-4-5")
-
-# Change thinking level
-PiEx.set_thinking_level(session, :high)
-
-# Compact context
-{:ok, result} = PiEx.compact(session, "Focus on recent changes")
+receive do
+  {:pi_event, %PiEx.Event.TextDelta{delta: text}} ->
+    IO.write(text)
+end
 ```
 
 ## How It Works
 
-PiEx uses [QuickBEAM](https://github.com/elixir-volt/quickbeam) to run the pi coding agent SDK inside a JavaScript runtime that lives on the BEAM. This provides:
+PiEx uses [QuickBEAM](https://github.com/elixir-volt/quickbeam) to run the pi coding agent SDK inside a JavaScript runtime on the BEAM:
 
 - **Full pi SDK access** - All agent capabilities, tools, and features
 - **Native event streaming** - Events flow through BEAM message passing
 - **Tool bridging** - Custom tools execute as Elixir functions
-- **OTP integration** - Sessions are GenServers with supervision support
-- **Fault tolerance** - Crash recovery via OTP supervisors
+- **OTP integration** - Agents are GenServers with supervision support
 
 ## License
 
