@@ -252,6 +252,71 @@ Example handler:
 
 See `PiEx.Telemetry` for full documentation.
 
+## Livebook
+
+PiEx works great with [Livebook](https://livebook.dev) for interactive exploration:
+
+```elixir
+# Setup cell
+Mix.install([
+  {:pi_ex, "~> 0.1.0"},
+  {:kino, "~> 0.14"}
+])
+
+# Install the SDK (first time only)
+PiEx.install()
+```
+
+```elixir
+# Define an agent that collects output
+defmodule NotebookAgent do
+  use PiEx.Agent
+
+  @impl true
+  def agent_init(opts) do
+    {:ok, %{output: [], frame: opts[:frame]}}
+  end
+
+  @impl true
+  def handle_text_delta(%{delta: text}, state) do
+    Kino.Frame.append(state.frame, Kino.Text.new(text))
+    {:noreply, %{state | output: [text | state.output]}}
+  end
+
+  @impl true
+  def handle_tool_start(%{tool_name: name}, state) do
+    Kino.Frame.append(state.frame, Kino.Text.new("\n[Using #{name}...]\n"))
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_agent_end(_event, state) do
+    Kino.Frame.append(state.frame, Kino.Text.new("\n[Done]\n"))
+    {:noreply, state}
+  end
+end
+```
+
+```elixir
+# Create output frame and start agent
+frame = Kino.Frame.new()
+
+{:ok, agent} = NotebookAgent.start_link(
+  api_key: System.get_env("ANTHROPIC_API_KEY"),
+  frame: frame
+)
+
+frame
+```
+
+```elixir
+# Send prompts interactively
+NotebookAgent.prompt(agent, "What files are in the current directory?")
+```
+
+> [!TIP]
+> Set your API key in Livebook's secrets (🔐) as `ANTHROPIC_API_KEY`, then access it with `System.get_env("LB_ANTHROPIC_API_KEY")`.
+
 ## How It Works
 
 PiEx uses [QuickBEAM](https://github.com/elixir-volt/quickbeam) to run the pi coding agent SDK inside a JavaScript runtime on the BEAM:
