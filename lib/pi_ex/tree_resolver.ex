@@ -2,11 +2,42 @@ defmodule PiEx.TreeResolver do
   @moduledoc """
   Tree-based npm dependency resolver.
 
-  Unlike PubGrub-based resolvers, this builds a dependency tree where each
-  package can have its own version of transitive dependencies. This matches
-  how npm/pnpm work with nested node_modules.
+  ## Why not use npm_ex's resolver?
 
-  Uses `NPM.Registry` for fetching package metadata.
+  npm_ex uses PubGrub (via HexSolver) for dependency resolution. PubGrub is
+  designed for package managers like Hex where only ONE version of each package
+  can exist in the dependency tree. This works great for Elixir but breaks for
+  npm packages.
+
+  The npm ecosystem commonly has transitive dependencies that require different
+  versions of the same package. For example, the pi SDK depends on:
+
+      @mariozechner/pi-coding-agent
+      └── cli-highlight
+          └── chalk@4.x        # needs chalk 4
+      └── chalk@5.x            # needs chalk 5
+
+  PubGrub sees this as an unsolvable conflict because it thinks there can only
+  be ONE chalk version. But npm/pnpm solve this with nested node_modules:
+
+      node_modules/
+      ├── chalk/               # v5 (hoisted, most common)
+      └── cli-highlight/
+          └── node_modules/
+              └── chalk/       # v4 (nested, different version)
+
+  This resolver builds a full dependency tree where each package can have its
+  own versions of transitive dependencies, matching how npm/pnpm actually work.
+
+  ## Algorithm
+
+  1. Start with root dependencies
+  2. For each package, fetch metadata from `NPM.Registry` and pick best version
+  3. Recursively resolve that package's dependencies (building a tree)
+  4. Flatten the tree: hoist the most common version, nest conflicts
+
+  Uses `NPM.Registry` for fetching package metadata and `NPM.Cache` for
+  downloading tarballs (via `PiEx.TreeLinker`).
   """
 
   require Logger

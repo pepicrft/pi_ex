@@ -2,9 +2,23 @@ defmodule PiEx.Installer do
   @moduledoc """
   Handles installation of the pi coding agent SDK.
 
-  Uses `PiEx.TreeResolver` for dependency resolution (supports nested
-  node_modules for version conflicts) and `NPM.Registry`/`NPM.Cache`
-  for fetching packages.
+  ## No Node.js/npm/pnpm required
+
+  This installer works entirely in Elixir. It uses:
+
+  - `PiEx.TreeResolver` - resolves npm dependencies (tree-based, handles version conflicts)
+  - `PiEx.TreeLinker` - creates node_modules structure (supports nesting)
+  - `NPM.Registry` - fetches package metadata from registry.npmjs.org
+  - `NPM.Cache` - downloads and caches package tarballs
+
+  We don't use npm_ex's `NPM.install/0` because its PubGrub-based resolver
+  can't handle packages with conflicting transitive dependencies (common in
+  the npm ecosystem). See `PiEx.TreeResolver` for details.
+
+  ## Cache location
+
+  Packages are installed to `$XDG_CACHE_HOME/pi_ex/pi-coding-agent-{version}/`.
+  See `PiEx.Config` for configuration options.
   """
 
   require Logger

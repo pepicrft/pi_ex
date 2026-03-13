@@ -2,8 +2,23 @@ defmodule PiEx.TreeLinker do
   @moduledoc """
   Links resolved packages into node_modules.
 
-  Supports nested node_modules for packages that need different versions
-  than what's hoisted at the top level.
+  ## Why not use npm_ex's linker?
+
+  npm_ex's linker creates a flat node_modules structure where each package
+  is symlinked to the global cache. This works when there's only one version
+  of each package, but breaks when multiple versions are needed.
+
+  This linker supports nested node_modules for version conflicts:
+
+      node_modules/
+      ├── chalk/                    # symlink to cache (v5, hoisted)
+      ├── other-package/            # symlink to cache
+      └── cli-highlight/
+          └── node_modules/
+              └── chalk/            # symlink to cache (v4, nested)
+
+  Node.js resolution will find the nested chalk@4 when cli-highlight
+  requires it, while other packages get the hoisted chalk@5.
 
   Uses `NPM.Cache` for downloading and caching package tarballs.
   """
