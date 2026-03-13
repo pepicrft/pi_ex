@@ -81,11 +81,11 @@ defmodule PiEx.Config do
   end
 
   @doc """
-  Returns the path to the pi CLI binary.
+  Returns the path to the bundled SDK.
   """
-  @spec pi_binary() :: String.t()
-  def pi_binary do
-    Path.join([package_path(), "node_modules", ".bin", "pi"])
+  @spec bundle_path() :: String.t()
+  def bundle_path do
+    Path.join(package_path(), "bridge.bundle.js")
   end
 
   @doc """
@@ -97,11 +97,11 @@ defmodule PiEx.Config do
   end
 
   @doc """
-  Checks if the configured version is installed locally.
+  Checks if the configured version is installed and bundled.
   """
   @spec installed?() :: boolean()
   def installed? do
-    File.exists?(pi_binary())
+    File.exists?(bundle_path())
   end
 
   @doc """

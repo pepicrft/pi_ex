@@ -1,23 +1,30 @@
 defmodule PiEx.Session do
   @moduledoc """
-  GenServer managing a pi coding agent session via RPC.
+  GenServer managing a pi coding agent session in QuickBEAM.
 
-  A session spawns a `pi --mode rpc` subprocess and communicates with it
-  using JSON-RPC over stdin/stdout. This provides full access to all pi
-  features while maintaining process isolation.
+  The session runs the pi SDK directly inside QuickBEAM with Node.js APIs
+  shimmed to call back to Elixir via `Beam.callSync()`.
 
-  ## Usage
+  ## Architecture
 
-      {:ok, session} = PiEx.Session.start_link(api_key: "...")
-      PiEx.subscribe(session)
-      PiEx.prompt(session, "Hello!")
-
-  ## Supervision
-
-      children = [
-        {PiEx.Session, name: MyApp.Agent, api_key: "..."}
-      ]
-      Supervisor.start_link(children, strategy: :one_for_one)
+  ```
+  ┌─────────────────────────────────────────────────────────┐
+  │                    QuickBEAM Runtime                     │
+  │  ┌─────────────────────────────────────────────────┐    │
+  │  │              Pi SDK (bundled)                    │    │
+  │  │                     │                            │    │
+  │  │    fs.readFileSync ─┼─► Beam.callSync('fs:...')  │    │
+  │  │    session.subscribe ─► Beam.callSync('pi:event')│    │
+  │  └─────────────────────────────────────────────────┘    │
+  └───────────────────────────┬─────────────────────────────┘
+                              │
+                              ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │                   Elixir Handlers                        │
+  │  'fs:readFileSync' ─► File.read!()                      │
+  │  'pi:event' ─► broadcast to subscribers                  │
+  └─────────────────────────────────────────────────────────┘
+  ```
   """
 
   use GenServer
@@ -33,34 +40,28 @@ defmodule PiEx.Session do
           | {:thinking_level, atom()}
           | {:cwd, Path.t()}
           | {:system_prompt, String.t()}
-          | {:tools, :coding | :read_only | :none}
           | {:custom_tools, [Tool.t() | module()]}
           | {:name, GenServer.name()}
 
-  @type state :: %{
-          port: port() | nil,
-          buffer: binary(),
-          subscribers: %{reference() => pid()},
-          streaming: boolean(),
-          session_id: String.t(),
-          pending_calls: %{integer() => {pid(), reference()}},
-          next_id: integer(),
-          config: map(),
-          start_time: integer()
-        }
+  defstruct [
+    :runtime,
+    :session_id,
+    :cwd,
+    :config,
+    :start_time,
+    subscribers: %{},
+    streaming: false,
+    custom_tools: []
+  ]
 
   # ---- Client API ----
 
-  @doc """
-  Starts a session process linked to the caller.
-  """
-  @spec start_link([option()]) :: GenServer.on_start()
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     {gen_opts, session_opts} = Keyword.split(opts, [:name])
     GenServer.start_link(__MODULE__, session_opts, gen_opts)
   end
 
-  @doc "Child specification for supervision."
   def child_spec(opts) do
     %{
       id: Keyword.get(opts, :id, __MODULE__),
@@ -70,106 +71,69 @@ defmodule PiEx.Session do
     }
   end
 
-  @doc false
   @spec prompt(GenServer.server(), String.t(), keyword()) :: :ok | {:error, term()}
-  def prompt(session, text, opts \\ []) do
-    GenServer.call(session, {:prompt, text, opts}, :infinity)
-  end
+  def prompt(session, text, opts \\ []), do: GenServer.call(session, {:prompt, text, opts}, :infinity)
 
-  @doc false
   @spec steer(GenServer.server(), String.t()) :: :ok | {:error, term()}
-  def steer(session, text) do
-    GenServer.call(session, {:steer, text}, :infinity)
-  end
+  def steer(session, text), do: GenServer.call(session, {:steer, text}, :infinity)
 
-  @doc false
   @spec follow_up(GenServer.server(), String.t()) :: :ok | {:error, term()}
-  def follow_up(session, text) do
-    GenServer.call(session, {:follow_up, text}, :infinity)
-  end
+  def follow_up(session, text), do: GenServer.call(session, {:follow_up, text}, :infinity)
 
-  @doc false
   @spec subscribe(GenServer.server(), pid()) :: reference()
-  def subscribe(session, pid) do
-    GenServer.call(session, {:subscribe, pid})
-  end
+  def subscribe(session, pid), do: GenServer.call(session, {:subscribe, pid})
 
-  @doc false
   @spec unsubscribe(GenServer.server(), reference()) :: :ok
-  def unsubscribe(session, ref) do
-    GenServer.call(session, {:unsubscribe, ref})
-  end
+  def unsubscribe(session, ref), do: GenServer.call(session, {:unsubscribe, ref})
 
-  @doc false
   @spec abort(GenServer.server()) :: :ok
-  def abort(session) do
-    GenServer.call(session, :abort)
-  end
+  def abort(session), do: GenServer.call(session, :abort)
 
-  @doc false
   @spec stop(GenServer.server()) :: :ok
-  def stop(session) do
-    GenServer.stop(session, :normal)
-  end
+  def stop(session), do: GenServer.stop(session, :normal)
 
-  @doc false
   @spec streaming?(GenServer.server()) :: boolean()
-  def streaming?(session) do
-    GenServer.call(session, :streaming?)
-  end
+  def streaming?(session), do: GenServer.call(session, :streaming?)
 
-  @doc false
   @spec messages(GenServer.server()) :: [Message.t()]
-  def messages(session) do
-    GenServer.call(session, :messages)
-  end
+  def messages(session), do: GenServer.call(session, :messages)
 
-  @doc false
   @spec set_model(GenServer.server(), String.t()) :: :ok | {:error, term()}
-  def set_model(session, model_id) do
-    GenServer.call(session, {:set_model, model_id})
-  end
+  def set_model(session, model_id), do: GenServer.call(session, {:set_model, model_id})
 
-  @doc false
   @spec set_thinking_level(GenServer.server(), atom()) :: :ok
-  def set_thinking_level(session, level) do
-    GenServer.call(session, {:set_thinking_level, level})
-  end
+  def set_thinking_level(session, level), do: GenServer.call(session, {:set_thinking_level, level})
 
-  @doc false
   @spec new_session(GenServer.server()) :: :ok | {:error, term()}
-  def new_session(session) do
-    GenServer.call(session, :new_session)
-  end
+  def new_session(session), do: GenServer.call(session, :new_session)
 
-  @doc false
   @spec compact(GenServer.server(), String.t() | nil) :: {:ok, map()} | {:error, term()}
-  def compact(session, instructions) do
-    GenServer.call(session, {:compact, instructions}, :infinity)
-  end
+  def compact(session, instructions), do: GenServer.call(session, {:compact, instructions}, :infinity)
 
   # ---- Server Callbacks ----
 
   @impl true
   def init(opts) do
-    start_time = System.monotonic_time()
-    session_id = generate_session_id()
+    session_id = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+    cwd = Keyword.get(opts, :cwd, File.cwd!())
 
-    state = %{
-      port: nil,
-      buffer: "",
-      subscribers: %{},
-      streaming: false,
+    custom_tools =
+      opts
+      |> Keyword.get(:custom_tools, [])
+      |> Enum.map(fn
+        %Tool{} = t -> t
+        module when is_atom(module) -> Tool.from_module(module)
+      end)
+
+    state = %__MODULE__{
       session_id: session_id,
-      pending_calls: %{},
-      next_id: 1,
-      config: build_config(opts, session_id),
-      start_time: start_time
+      cwd: cwd,
+      custom_tools: custom_tools,
+      config: build_config(opts, session_id, cwd),
+      start_time: System.monotonic_time()
     }
 
     Telemetry.session_start(%{session_id: session_id, config: state.config})
-
-    # Initialize asynchronously
     send(self(), :initialize)
 
     {:ok, state}
@@ -177,98 +141,70 @@ defmodule PiEx.Session do
 
   @impl true
   def handle_info(:initialize, state) do
-    with :ok <- ensure_installed(),
-         {:ok, port} <- start_pi_rpc(state.config) do
-      {:noreply, %{state | port: port}}
+    with :ok <- Installer.ensure_installed!(),
+         {:ok, runtime} <- start_runtime(state) do
+      {:noreply, %{state | runtime: runtime}}
     else
       {:error, reason} ->
-        Logger.error("[PiEx] Failed to initialize session: #{inspect(reason)}")
+        Logger.error("[PiEx] Initialization failed: #{inspect(reason)}")
         {:stop, {:initialization_failed, reason}, state}
     end
+  rescue
+    e ->
+      Logger.error("[PiEx] Initialization error: #{Exception.message(e)}")
+      {:stop, {:initialization_failed, e}, state}
   end
 
-  def handle_info({port, {:data, data}}, %{port: port} = state) do
-    # Accumulate data and process complete JSON messages
-    buffer = state.buffer <> data
-    {messages, remaining} = parse_json_lines(buffer)
+  def handle_info({:pi_event, event_data}, state) do
+    case Event.parse(event_data) do
+      nil ->
+        {:noreply, state}
 
-    state = %{state | buffer: remaining}
+      event ->
+        state = update_streaming_state(state, event)
 
-    state =
-      Enum.reduce(messages, state, fn msg, acc ->
-        handle_rpc_message(msg, acc)
-      end)
+        for {_ref, pid} <- state.subscribers do
+          send(pid, {:pi_event, event})
+        end
 
-    {:noreply, state}
-  end
-
-  def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
-    Logger.error("[PiEx] Pi process exited with status #{status}")
-    {:stop, {:pi_exited, status}, state}
+        {:noreply, state}
+    end
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     {:noreply, %{state | subscribers: Map.delete(state.subscribers, ref)}}
   end
 
-  def handle_info(_msg, state) do
-    {:noreply, state}
-  end
+  def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
-  def handle_call({:prompt, _text, _opts}, _from, %{port: nil} = state) do
+  def handle_call({:prompt, _text, _opts}, _from, %{runtime: nil} = state) do
     {:reply, {:error, :not_ready}, state}
   end
 
-  def handle_call({:prompt, text, opts}, from, state) do
-    {id, state} = next_call_id(state)
+  def handle_call({:prompt, text, opts}, _from, state) do
+    start = Telemetry.prompt_start(%{session_id: state.session_id, prompt: text})
 
-    request = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "method" => "prompt",
-      "params" => %{
-        "text" => text,
-        "images" => Keyword.get(opts, :images, [])
-      }
-    }
+    result =
+      case QuickBEAM.call(state.runtime, "prompt", [text, to_js_opts(opts)]) do
+        {:ok, _} ->
+          Telemetry.prompt_stop(%{session_id: state.session_id}, start)
+          :ok
 
-    send_rpc(state.port, request)
-    state = register_call(state, id, from)
+        {:error, reason} = err ->
+          Telemetry.prompt_exception(%{session_id: state.session_id}, start, :error, reason)
+          err
+      end
 
-    {:noreply, state}
+    {:reply, result, state}
   end
 
-  def handle_call({:steer, text}, from, state) do
-    {id, state} = next_call_id(state)
-
-    request = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "method" => "steer",
-      "params" => %{"text" => text}
-    }
-
-    send_rpc(state.port, request)
-    state = register_call(state, id, from)
-
-    {:noreply, state}
+  def handle_call({:steer, text}, _from, %{runtime: r} = state) when r != nil do
+    {:reply, call_ok(r, "steer", [text]), state}
   end
 
-  def handle_call({:follow_up, text}, from, state) do
-    {id, state} = next_call_id(state)
-
-    request = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "method" => "followUp",
-      "params" => %{"text" => text}
-    }
-
-    send_rpc(state.port, request)
-    state = register_call(state, id, from)
-
-    {:noreply, state}
+  def handle_call({:follow_up, text}, _from, %{runtime: r} = state) when r != nil do
+    {:reply, call_ok(r, "followUp", [text]), state}
   end
 
   def handle_call({:subscribe, pid}, _from, state) do
@@ -281,270 +217,285 @@ defmodule PiEx.Session do
     {:reply, :ok, %{state | subscribers: Map.delete(state.subscribers, ref)}}
   end
 
-  def handle_call(:abort, _from, %{port: port} = state) when not is_nil(port) do
-    request = %{
-      "jsonrpc" => "2.0",
-      "method" => "abort",
-      "params" => %{}
-    }
-
-    send_rpc(port, request)
+  def handle_call(:abort, _from, %{runtime: r} = state) when r != nil do
+    QuickBEAM.call(r, "abort", [])
     {:reply, :ok, %{state | streaming: false}}
   end
 
-  def handle_call(:streaming?, _from, state) do
-    {:reply, state.streaming, state}
+  def handle_call(:streaming?, _from, state), do: {:reply, state.streaming, state}
+
+  def handle_call(:messages, _from, %{runtime: r} = state) when r != nil do
+    result =
+      case QuickBEAM.call(r, "getMessages", []) do
+        {:ok, raw} -> Enum.map(raw, &Message.from_map/1) |> Enum.reject(&is_nil/1)
+        _ -> []
+      end
+
+    {:reply, result, state}
   end
 
-  def handle_call(:messages, from, state) do
-    {id, state} = next_call_id(state)
-
-    request = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "method" => "getMessages",
-      "params" => %{}
-    }
-
-    send_rpc(state.port, request)
-    state = register_call(state, id, from)
-
-    {:noreply, state}
+  def handle_call({:set_model, model_id}, _from, %{runtime: r} = state) when r != nil do
+    {:reply, call_ok(r, "setModel", [model_id]), state}
   end
 
-  def handle_call({:set_model, model_id}, from, state) do
-    {id, state} = next_call_id(state)
-
-    request = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "method" => "setModel",
-      "params" => %{"modelId" => model_id}
-    }
-
-    send_rpc(state.port, request)
-    state = register_call(state, id, from)
-
-    {:noreply, state}
-  end
-
-  def handle_call({:set_thinking_level, level}, _from, %{port: port} = state) when not is_nil(port) do
-    request = %{
-      "jsonrpc" => "2.0",
-      "method" => "setThinkingLevel",
-      "params" => %{"level" => to_string(level)}
-    }
-
-    send_rpc(port, request)
+  def handle_call({:set_thinking_level, level}, _from, %{runtime: r} = state) when r != nil do
+    QuickBEAM.call(r, "setThinkingLevel", [to_string(level)])
     {:reply, :ok, state}
   end
 
-  def handle_call(:new_session, from, state) do
-    {id, state} = next_call_id(state)
-
-    request = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "method" => "newSession",
-      "params" => %{}
-    }
-
-    send_rpc(state.port, request)
-    state = register_call(state, id, from)
-
-    {:noreply, state}
+  def handle_call(:new_session, _from, %{runtime: r} = state) when r != nil do
+    {:reply, call_ok(r, "newSession", []), state}
   end
 
-  def handle_call({:compact, instructions}, from, state) do
-    {id, state} = next_call_id(state)
-
-    request = %{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "method" => "compact",
-      "params" => %{"instructions" => instructions}
-    }
-
-    send_rpc(state.port, request)
-    state = register_call(state, id, from)
-
-    {:noreply, state}
+  def handle_call({:compact, instructions}, _from, %{runtime: r} = state) when r != nil do
+    {:reply, QuickBEAM.call(r, "compact", [instructions]), state}
   end
 
-  def handle_call(_msg, _from, %{port: nil} = state) do
+  def handle_call(_msg, _from, %{runtime: nil} = state) do
     {:reply, {:error, :not_ready}, state}
   end
 
   @impl true
-  def terminate(reason, state) do
+  def terminate(_reason, state) do
     Telemetry.session_stop(%{session_id: state.session_id}, state.start_time)
-
-    if state.port do
-      Port.close(state.port)
-    end
-
-    reason
+    if state.runtime, do: QuickBEAM.stop(state.runtime)
   end
 
-  # ---- Private Functions ----
+  # ---- Private ----
 
-  defp ensure_installed do
-    Installer.ensure_installed!()
-    :ok
-  rescue
-    e -> {:error, Exception.message(e)}
+  defp start_runtime(state) do
+    session_pid = self()
+    handlers = build_handlers(session_pid, state)
+
+    case File.read(Config.bundle_path()) do
+      {:ok, bundle} ->
+        preamble = """
+        globalThis.__CUSTOM_TOOL_DEFS__ = #{JSON.encode!(Enum.map(state.custom_tools, &Tool.to_js/1))};
+        globalThis.process = globalThis.process || {
+          env: {},
+          cwd: () => '#{state.cwd}',
+          platform: '#{os_platform()}',
+          arch: '#{os_arch()}'
+        };
+        """
+
+        with {:ok, runtime} <- QuickBEAM.start(handlers: handlers, apis: [:browser]),
+             {:ok, _} <- QuickBEAM.eval(runtime, preamble <> bundle),
+             {:ok, _} <- QuickBEAM.call(runtime, "initSession", [state.config]) do
+          {:ok, runtime}
+        end
+
+      {:error, reason} ->
+        {:error, {:bundle_read_failed, reason}}
+    end
   end
 
-  defp start_pi_rpc(config) do
-    pi_path = find_pi_executable()
+  defp build_handlers(session_pid, state) do
+    %{
+      # SDK events
+      "pi:event" => fn [event] ->
+        send(session_pid, {:pi_event, event})
+        :ok
+      end,
 
-    unless pi_path do
-      raise "Pi executable not found. Please install pi globally: npm install -g @mariozechner/pi-coding-agent"
-    end
+      # Custom tool execution
+      "tool:execute" => fn [name, params, ctx] ->
+        execute_tool(name, params, ctx, state.custom_tools, state.session_id)
+      end,
 
-    # Build environment with API key
-    env =
-      case config["apiKey"] do
-        nil -> []
-        key -> [{~c"ANTHROPIC_API_KEY", String.to_charlist(key)}]
+      # File system
+      "fs:readFileSync" => fn [path, encoding] ->
+        case File.read(path) do
+          {:ok, data} -> %{"data" => if(encoding, do: data, else: Base.encode64(data))}
+          {:error, r} -> %{"error" => to_string(r)}
+        end
+      end,
+      "fs:writeFileSync" => fn [path, data] ->
+        case File.write(path, data) do
+          :ok -> %{"ok" => true}
+          {:error, r} -> %{"error" => to_string(r)}
+        end
+      end,
+      "fs:existsSync" => fn [path] -> File.exists?(path) end,
+      "fs:mkdirSync" => fn [path, recursive] ->
+        case if(recursive, do: File.mkdir_p(path), else: File.mkdir(path)) do
+          :ok -> %{"ok" => true}
+          {:error, r} -> %{"error" => to_string(r)}
+        end
+      end,
+      "fs:readdirSync" => fn [path] ->
+        case File.ls(path) do
+          {:ok, files} -> %{"data" => files}
+          {:error, r} -> %{"error" => to_string(r)}
+        end
+      end,
+      "fs:statSync" => fn [path] ->
+        case File.stat(path) do
+          {:ok, s} ->
+            type = case s.type do
+              :regular -> "file"
+              :directory -> "directory"
+              :symlink -> "symlink"
+              other -> to_string(other)
+            end
+            %{"data" => %{"type" => type, "size" => s.size, "mtime" => to_iso8601(s.mtime)}}
+          {:error, r} -> %{"error" => to_string(r)}
+        end
+      end,
+      "fs:unlinkSync" => fn [path] ->
+        case File.rm(path) do
+          :ok -> %{"ok" => true}
+          {:error, r} -> %{"error" => to_string(r)}
+        end
+      end,
+      "fs:rmSync" => fn [path, recursive] ->
+        case if(recursive, do: File.rm_rf(path), else: File.rm(path)) do
+          :ok -> %{"ok" => true}
+          {:ok, _} -> %{"ok" => true}
+          {:error, r} -> %{"error" => to_string(r)}
+          {:error, r, _} -> %{"error" => to_string(r)}
+        end
+      end,
+      "fs:realpathSync" => fn [path] -> %{"data" => Path.expand(path)} end,
+      "fs:renameSync" => fn [old, new] ->
+        case File.rename(old, new) do
+          :ok -> %{"ok" => true}
+          {:error, r} -> %{"error" => to_string(r)}
+        end
+      end,
+      "fs:copyFileSync" => fn [src, dest] ->
+        case File.cp(src, dest) do
+          :ok -> %{"ok" => true}
+          {:error, r} -> %{"error" => to_string(r)}
+        end
+      end,
+
+      # OS
+      "os:platform" => fn [] -> os_platform() end,
+      "os:arch" => fn [] -> os_arch() end,
+      "os:homedir" => fn [] -> System.user_home!() end,
+      "os:tmpdir" => fn [] -> System.tmp_dir!() end,
+      "os:hostname" => fn [] -> :inet.gethostname() |> elem(1) |> to_string() end,
+      "os:cpuCount" => fn [] -> System.schedulers_online() end,
+      "os:totalmem" => fn [] -> :erlang.memory(:total) end,
+      "os:freemem" => fn [] -> :erlang.memory(:total) - :erlang.memory(:processes_used) end,
+      "os:uptime" => fn [] -> :erlang.statistics(:wall_clock) |> elem(0) |> div(1000) end,
+      "os:release" => fn [] -> :erlang.system_info(:otp_release) |> to_string() end,
+      "os:username" => fn [] -> System.get_env("USER", "unknown") end,
+      "os:shell" => fn [] -> System.get_env("SHELL", "/bin/sh") end,
+
+      # Child process
+      "child_process:execSync" => fn [cmd, cwd] ->
+        try do
+          case System.cmd("sh", ["-c", cmd], cd: cwd, stderr_to_stdout: true) do
+            {out, 0} -> %{"stdout" => out, "status" => 0}
+            {out, status} -> %{"stdout" => out, "status" => status, "error" => "exit #{status}"}
+          end
+        rescue
+          e -> %{"error" => Exception.message(e), "status" => 1}
+        end
       end
-
-    # Start pi in RPC mode
-    args = ["--mode", "rpc", "--no-session"]
-
-    port =
-      Port.open(
-        {:spawn_executable, pi_path},
-        [
-          :binary,
-          :exit_status,
-          {:args, args},
-          {:cd, config["cwd"]},
-          {:env, env},
-          {:line, 1_000_000}
-        ]
-      )
-
-    {:ok, port}
+    }
   end
 
-  defp find_pi_executable do
-    # Try common locations
-    paths = [
-      System.find_executable("pi"),
-      Path.join([Config.package_path(), "node_modules", ".bin", "pi"]),
-      Path.expand("~/.npm/bin/pi"),
-      "/usr/local/bin/pi"
-    ]
+  defp execute_tool(name, params, context, tools, session_id) do
+    meta = %{session_id: session_id, tool_name: name, tool_call_id: context["toolCallId"]}
+    start = Telemetry.tool_start(meta)
 
-    Enum.find(paths, &(&1 && File.exists?(&1)))
-  end
-
-  defp send_rpc(port, request) do
-    json = JSON.encode!(request)
-    Port.command(port, json <> "\n")
-  end
-
-  defp parse_json_lines(buffer) do
-    lines = String.split(buffer, "\n")
-
-    case List.pop_at(lines, -1) do
-      {"", complete_lines} ->
-        messages =
-          complete_lines
-          |> Enum.reject(&(&1 == ""))
-          |> Enum.map(&parse_json/1)
-          |> Enum.reject(&is_nil/1)
-
-        {messages, ""}
-
-      {partial, complete_lines} ->
-        messages =
-          complete_lines
-          |> Enum.reject(&(&1 == ""))
-          |> Enum.map(&parse_json/1)
-          |> Enum.reject(&is_nil/1)
-
-        {messages, partial}
-    end
-  end
-
-  defp parse_json(line) do
-    case JSON.decode(line) do
-      {:ok, data} -> data
-      {:error, _} -> nil
-    end
-  end
-
-  defp handle_rpc_message(%{"jsonrpc" => "2.0", "method" => "event", "params" => params}, state) do
-    case Event.parse(params) do
+    case Enum.find(tools, &(&1.name == name)) do
       nil ->
-        state
+        Telemetry.tool_stop(meta, start, false)
+        %{"error" => "Unknown tool: #{name}"}
 
-      event ->
-        state = update_streaming_state(state, event)
-        broadcast_event(state.subscribers, event)
-        state
+      tool ->
+        ctx = %{session_id: session_id, cwd: context["cwd"], tool_call_id: context["toolCallId"]}
+
+        try do
+          case Tool.execute(tool, atomize_keys(params), ctx) do
+            {:ok, result} ->
+              Telemetry.tool_stop(meta, start, true)
+              result
+
+            {:error, msg} ->
+              Telemetry.tool_stop(meta, start, false)
+              %{"error" => msg}
+          end
+        rescue
+          e ->
+            Telemetry.tool_exception(meta, start, :error, e)
+            %{"error" => Exception.message(e)}
+        end
     end
   end
 
-  defp handle_rpc_message(%{"jsonrpc" => "2.0", "id" => id, "result" => result}, state) do
-    case Map.pop(state.pending_calls, id) do
-      {nil, _} ->
-        state
-
-      {{from, _ref}, pending} ->
-        GenServer.reply(from, {:ok, result})
-        %{state | pending_calls: pending}
-    end
+  defp atomize_keys(map) when is_map(map) do
+    Map.new(map, fn {k, v} ->
+      key = if is_binary(k), do: String.to_existing_atom(k), else: k
+      {key, atomize_keys(v)}
+    end)
+  rescue
+    ArgumentError -> map
   end
 
-  defp handle_rpc_message(%{"jsonrpc" => "2.0", "id" => id, "error" => error}, state) do
-    case Map.pop(state.pending_calls, id) do
-      {nil, _} ->
-        state
+  defp atomize_keys(list) when is_list(list), do: Enum.map(list, &atomize_keys/1)
+  defp atomize_keys(other), do: other
 
-      {{from, _ref}, pending} ->
-        GenServer.reply(from, {:error, error})
-        %{state | pending_calls: pending}
-    end
-  end
-
-  defp handle_rpc_message(_msg, state), do: state
-
-  defp build_config(opts, session_id) do
+  defp build_config(opts, session_id, cwd) do
     %{
       "apiKey" => Keyword.get(opts, :api_key),
-      "provider" => opts |> Keyword.get(:provider, :anthropic) |> to_string(),
+      "provider" => to_string(Keyword.get(opts, :provider, :anthropic)),
       "model" => Keyword.get(opts, :model),
-      "thinkingLevel" => opts |> Keyword.get(:thinking_level, :off) |> to_string(),
-      "cwd" => Keyword.get(opts, :cwd, File.cwd!()),
+      "thinkingLevel" => to_string(Keyword.get(opts, :thinking_level, :off)),
+      "cwd" => cwd,
       "systemPrompt" => Keyword.get(opts, :system_prompt),
       "sessionId" => session_id
     }
   end
 
-  defp next_call_id(state) do
-    {state.next_id, %{state | next_id: state.next_id + 1}}
+  defp to_js_opts(opts) do
+    Map.new(opts, fn
+      {:streaming_behavior, v} -> {"streamingBehavior", to_string(v)}
+      {:images, images} -> {"images", Enum.map(images, &PiEx.Image.to_js/1)}
+      {k, v} -> {to_string(k), v}
+    end)
   end
 
-  defp register_call(state, id, from) do
-    ref = make_ref()
-    %{state | pending_calls: Map.put(state.pending_calls, id, {from, ref})}
+  defp call_ok(runtime, func, args) do
+    case QuickBEAM.call(runtime, func, args) do
+      {:ok, _} -> :ok
+      error -> error
+    end
   end
 
   defp update_streaming_state(state, %Event.AgentStart{}), do: %{state | streaming: true}
   defp update_streaming_state(state, %Event.AgentEnd{}), do: %{state | streaming: false}
   defp update_streaming_state(state, %Event.Error{}), do: %{state | streaming: false}
-  defp update_streaming_state(state, _event), do: state
+  defp update_streaming_state(state, _), do: state
 
-  defp broadcast_event(subscribers, event) do
-    for {_ref, pid} <- subscribers do
-      send(pid, {:pi_event, event})
+  defp os_platform do
+    case :os.type() do
+      {:unix, :darwin} -> "darwin"
+      {:unix, :linux} -> "linux"
+      {:win32, _} -> "win32"
+      {_, os} -> to_string(os)
     end
   end
 
-  defp generate_session_id do
-    :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+  defp os_arch do
+    :erlang.system_info(:system_architecture)
+    |> to_string()
+    |> String.split("-")
+    |> hd()
+    |> case do
+      "aarch64" -> "arm64"
+      "x86_64" -> "x64"
+      arch -> arch
+    end
+  end
+
+  defp to_iso8601({{y, m, d}, {h, min, s}}) do
+    NaiveDateTime.new!(y, m, d, h, min, s)
+    |> DateTime.from_naive!("Etc/UTC")
+    |> DateTime.to_iso8601()
   end
 end
