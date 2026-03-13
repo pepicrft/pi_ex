@@ -237,11 +237,17 @@ defmodule PiEx.Event do
   @spec parse(map()) :: t() | nil
   def parse(raw_event)
 
-  def parse(%{"type" => "message_update", "assistantMessageEvent" => %{"type" => "text_delta", "delta" => delta}}) do
+  def parse(%{
+        "type" => "message_update",
+        "assistantMessageEvent" => %{"type" => "text_delta", "delta" => delta}
+      }) do
     %TextDelta{delta: delta}
   end
 
-  def parse(%{"type" => "message_update", "assistantMessageEvent" => %{"type" => "thinking_delta", "delta" => delta}}) do
+  def parse(%{
+        "type" => "message_update",
+        "assistantMessageEvent" => %{"type" => "thinking_delta", "delta" => delta}
+      }) do
     %ThinkingDelta{delta: delta}
   end
 

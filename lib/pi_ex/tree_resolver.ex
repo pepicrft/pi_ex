@@ -219,7 +219,9 @@ defmodule PiEx.TreeResolver do
           |> Enum.reject(fn {_, v, _, _} -> v == hoisted_version end)
           |> Enum.reduce(nested, fn {_, _version, info, path}, nested ->
             case path do
-              [] -> nested
+              [] ->
+                nested
+
               [parent | _] ->
                 nested_key = "#{parent}/node_modules/#{name}"
                 Map.put_new(nested, nested_key, info)

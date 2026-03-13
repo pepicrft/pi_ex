@@ -1,4 +1,6 @@
 defmodule Mix.Tasks.PiEx.Install do
+  @shortdoc "Installs the pi coding agent npm package"
+
   @moduledoc """
   Installs the pi coding agent npm package.
 
@@ -35,8 +37,6 @@ defmodule Mix.Tasks.PiEx.Install do
   """
 
   use Mix.Task
-
-  @shortdoc "Installs the pi coding agent npm package"
 
   @switches [
     version: :string,

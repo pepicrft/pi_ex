@@ -142,7 +142,7 @@ defmodule PiEx.Tool do
   def from_module(module) do
     %__MODULE__{
       name: module.name(),
-      label: if(function_exported?(module, :label, 0), do: module.label(), else: nil),
+      label: if(function_exported?(module, :label, 0), do: module.label()),
       description: module.description(),
       parameters: module.parameters(),
       execute: &module.execute/2
@@ -181,7 +181,7 @@ defmodule PiEx.Tool do
   # Normalize Elixir-style schema to JSON Schema
   defp normalize_parameters(params) when is_map(params) do
     params
-    |> Enum.map(fn
+    |> Map.new(fn
       {:type, :object} -> {"type", "object"}
       {:type, :string} -> {"type", "string"}
       {:type, :number} -> {"type", "number"}
@@ -196,7 +196,6 @@ defmodule PiEx.Tool do
       {k, v} when is_map(v) -> {to_string(k), normalize_parameters(v)}
       {k, v} -> {to_string(k), v}
     end)
-    |> Map.new()
   end
 
   defp normalize_parameters(other), do: other

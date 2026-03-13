@@ -24,7 +24,8 @@ defmodule PiEx.MixProject do
       {:quickbeam, "~> 0.5.0"},
       {:npm, "~> 0.3.0"},
       {:telemetry, "~> 1.0"},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:quokka, "~> 2.12", only: [:dev, :test], runtime: false}
     ]
   end
 end

@@ -21,11 +21,11 @@ defmodule PiEx.Installer do
   See `PiEx.Config` for configuration options.
   """
 
-  require Logger
-
   alias PiEx.Config
-  alias PiEx.TreeResolver
   alias PiEx.TreeLinker
+  alias PiEx.TreeResolver
+
+  require Logger
 
   @doc """
   Ensures the pi SDK is installed.

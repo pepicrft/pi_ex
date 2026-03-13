@@ -113,8 +113,7 @@ defmodule PiEx.Message do
   defp extract_text_content(content) when is_list(content) do
     content
     |> Enum.filter(&match?(%{"type" => "text"}, &1))
-    |> Enum.map(& &1["text"])
-    |> Enum.join("")
+    |> Enum.map_join("", & &1["text"])
   end
 
   defp extract_text_content(_), do: ""
@@ -122,8 +121,7 @@ defmodule PiEx.Message do
   defp extract_thinking(content) when is_list(content) do
     content
     |> Enum.filter(&match?(%{"type" => "thinking"}, &1))
-    |> Enum.map(& &1["thinking"])
-    |> Enum.join("")
+    |> Enum.map_join("", & &1["thinking"])
     |> case do
       "" -> nil
       text -> text

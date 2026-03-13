@@ -141,7 +141,9 @@ defmodule PiEx.Image do
   # Private helpers
 
   defp infer_media_type(path) do
-    case Path.extname(path) |> String.downcase() do
+    Path.extname(path)
+    |> String.downcase()
+    |> case do
       ".png" -> "image/png"
       ".jpg" -> "image/jpeg"
       ".jpeg" -> "image/jpeg"

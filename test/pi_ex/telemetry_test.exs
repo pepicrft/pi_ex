@@ -105,11 +105,12 @@ defmodule PiEx.TelemetryTest do
 
   describe "tool telemetry" do
     test "tool_start/1 returns start time and emits event" do
-      start_time = Telemetry.tool_start(%{
-        session_id: "sess_123",
-        tool_name: "read",
-        tool_call_id: "tc_1"
-      })
+      start_time =
+        Telemetry.tool_start(%{
+          session_id: "sess_123",
+          tool_name: "read",
+          tool_call_id: "tc_1"
+        })
 
       assert is_integer(start_time)
       assert_receive {:telemetry, [:pi_ex, :tool, :start], measurements, metadata}
@@ -171,10 +172,11 @@ defmodule PiEx.TelemetryTest do
   describe "span/3" do
     test "wraps function execution with telemetry" do
       # Note: span uses :telemetry.span which emits start/stop events
-      result = Telemetry.span(:test, %{foo: "bar"}, fn ->
-        Process.sleep(5)
-        {:ok, 42}
-      end)
+      result =
+        Telemetry.span(:test, %{foo: "bar"}, fn ->
+          Process.sleep(5)
+          {:ok, 42}
+        end)
 
       assert result == {:ok, 42}
     end

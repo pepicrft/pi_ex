@@ -137,7 +137,11 @@ defmodule PiExTest do
 
     test "parses error events" do
       assert %Event.Error{message: "Something failed", code: "ERR_001"} =
-               Event.parse(%{"type" => "error", "message" => "Something failed", "code" => "ERR_001"})
+               Event.parse(%{
+                 "type" => "error",
+                 "message" => "Something failed",
+                 "code" => "ERR_001"
+               })
     end
 
     test "returns nil for unknown events" do
@@ -428,7 +432,9 @@ defmodule PiExTest do
       }
 
       msg = Message.from_map(raw)
-      assert [%Message.ToolCall{id: "tc_1", name: "read", input: %{"path" => "x"}}] = msg.tool_calls
+
+      assert [%Message.ToolCall{id: "tc_1", name: "read", input: %{"path" => "x"}}] =
+               msg.tool_calls
     end
 
     test "parses assistant messages with stop reason and usage" do
@@ -455,7 +461,12 @@ defmodule PiExTest do
       }
 
       msg = Message.from_map(raw)
-      assert %Message.ToolResult{tool_use_id: "tc_1", content: "file contents here", is_error: false} = msg
+
+      assert %Message.ToolResult{
+               tool_use_id: "tc_1",
+               content: "file contents here",
+               is_error: false
+             } = msg
     end
 
     test "returns nil for unknown roles" do

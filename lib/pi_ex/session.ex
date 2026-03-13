@@ -5,9 +5,9 @@ defmodule PiEx.Session do
 
   use GenServer
 
-  require Logger
-
   alias PiEx.{Config, Event, Installer, Message, Telemetry, Tool}
+
+  require Logger
 
   @type option ::
           {:api_key, String.t()}
@@ -48,7 +48,8 @@ defmodule PiEx.Session do
   end
 
   @spec prompt(GenServer.server(), String.t(), keyword()) :: :ok | {:error, term()}
-  def prompt(session, text, opts \\ []), do: GenServer.call(session, {:prompt, text, opts}, :infinity)
+  def prompt(session, text, opts \\ []),
+    do: GenServer.call(session, {:prompt, text, opts}, :infinity)
 
   @spec steer(GenServer.server(), String.t()) :: :ok | {:error, term()}
   def steer(session, text), do: GenServer.call(session, {:steer, text}, :infinity)
@@ -78,13 +79,15 @@ defmodule PiEx.Session do
   def set_model(session, model_id), do: GenServer.call(session, {:set_model, model_id})
 
   @spec set_thinking_level(GenServer.server(), atom()) :: :ok
-  def set_thinking_level(session, level), do: GenServer.call(session, {:set_thinking_level, level})
+  def set_thinking_level(session, level),
+    do: GenServer.call(session, {:set_thinking_level, level})
 
   @spec new_session(GenServer.server()) :: :ok | {:error, term()}
   def new_session(session), do: GenServer.call(session, :new_session)
 
   @spec compact(GenServer.server(), String.t() | nil) :: {:ok, map()} | {:error, term()}
-  def compact(session, instructions), do: GenServer.call(session, {:compact, instructions}, :infinity)
+  def compact(session, instructions),
+    do: GenServer.call(session, {:compact, instructions}, :infinity)
 
   # ---- Server Callbacks ----
 
@@ -265,13 +268,14 @@ defmodule PiEx.Session do
     # 1. Provide Node.js APIs via apis: [:node]
     # 2. Auto-bundle bridge.ts with npm imports from node_modules
     # 3. Execute the script in the runtime
-    {:ok, runtime} = QuickBEAM.start(
-      apis: [:node],
-      script: Config.bridge_path(),
-      node_modules: Config.node_modules_path(),
-      handlers: handlers,
-      cwd: state.cwd
-    )
+    {:ok, runtime} =
+      QuickBEAM.start(
+        apis: [:node],
+        script: Config.bridge_path(),
+        node_modules: Config.node_modules_path(),
+        handlers: handlers,
+        cwd: state.cwd
+      )
 
     # Inject preamble and initialize session
     with {:ok, _} <- QuickBEAM.eval(runtime, preamble),
