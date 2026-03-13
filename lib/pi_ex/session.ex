@@ -5,7 +5,7 @@ defmodule PiEx.Session do
 
   use GenServer
 
-  alias PiEx.{Config, Event, Installer, Message, Telemetry, Tool}
+  alias PiEx.{Config, Event, Message, Telemetry, Tool}
 
   require Logger
 
@@ -120,10 +120,10 @@ defmodule PiEx.Session do
 
   @impl true
   def handle_info(:initialize, state) do
-    with :ok <- Installer.ensure_installed!(),
-         {:ok, runtime} <- start_runtime(state) do
-      {:noreply, %{state | runtime: runtime}}
-    else
+    case start_runtime(state) do
+      {:ok, runtime} ->
+        {:noreply, %{state | runtime: runtime}}
+
       {:error, reason} ->
         Logger.error("[PiEx] Initialization failed: #{inspect(reason)}")
         {:stop, {:initialization_failed, reason}, state}
@@ -264,15 +264,14 @@ defmodule PiEx.Session do
     globalThis.__PI_EX_CONFIG__ = #{JSON.encode!(state.config)};
     """
 
-    # QuickBEAM will:
-    # 1. Provide Node.js APIs via apis: [:node]
-    # 2. Auto-bundle bridge.ts with npm imports from node_modules
-    # 3. Execute the script in the runtime
+    # QuickBEAM provides:
+    # - Browser APIs (fetch, crypto) via :browser
+    # - Node.js APIs (fs, path, etc.) via :node
+    # - TypeScript transformation via :script
     {:ok, runtime} =
       QuickBEAM.start(
-        apis: [:node],
+        apis: [:browser, :node],
         script: Config.bridge_path(),
-        node_modules: Config.node_modules_path(),
         handlers: handlers,
         cwd: state.cwd
       )

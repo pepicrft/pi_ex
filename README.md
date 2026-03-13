@@ -1,8 +1,8 @@
 # PiEx
 
-Elixir client for the [pi coding agent](https://github.com/badlogic/pi-mono) SDK.
+AI coding agent for Elixir, powered by Claude.
 
-PiEx runs the pi coding agent inside your Elixir application using [QuickBEAM](https://github.com/elixir-volt/quickbeam), a JavaScript runtime for the BEAM. This gives you full access to pi's agent capabilities with native Elixir integration.
+PiEx provides a GenServer-based agent that can read files, execute commands, and edit code. Built on [QuickBEAM](https://github.com/elixir-volt/quickbeam) (JavaScript runtime for BEAM), it calls the Anthropic API directly with no npm dependencies.
 
 ## Installation
 
@@ -18,16 +18,7 @@ end
 
 Configure the pi version in `config/config.exs`:
 
-```elixir
-config :pi_ex,
-  version: "0.57.1"
-```
-
-Install the pi coding agent npm package:
-
-```bash
-mix pi_ex.install
-```
+No additional installation steps needed - the package works out of the box!
 
 ## Quick Start
 
@@ -74,21 +65,12 @@ MyAgent.prompt(agent, "What files are in the current directory?")
 
 ## Configuration
 
+No configuration required! PiEx uses the Anthropic API directly via fetch.
+
+Set your API key when starting the agent:
+
 ```elixir
-# config/config.exs
-config :pi_ex,
-  # Pi coding agent version
-  version: "0.57.1",
-
-  # Cache directory for npm packages (optional, follows XDG)
-  cache_dir: "~/.cache/pi_ex"
-```
-
-Or via environment variables:
-
-```bash
-export PI_EX_VERSION=0.57.1
-export PI_EX_CACHE_DIR=~/.cache/pi_ex
+MyAgent.start_link(api_key: System.get_env("ANTHROPIC_API_KEY"))
 ```
 
 ## Agent Callbacks
@@ -262,9 +244,6 @@ Mix.install([
   {:pi_ex, "~> 0.1.0"},
   {:kino, "~> 0.14"}
 ])
-
-# Install the SDK (first time only)
-PiEx.install()
 ```
 
 ```elixir
@@ -319,15 +298,16 @@ NotebookAgent.prompt(agent, "What files are in the current directory?")
 
 ## How It Works
 
-PiEx uses [QuickBEAM](https://github.com/elixir-volt/quickbeam) to run the pi coding agent SDK inside a JavaScript runtime on the BEAM:
+PiEx uses [QuickBEAM](https://github.com/elixir-volt/quickbeam) to run a minimal JavaScript bridge that calls the Anthropic API directly:
 
-- **Full pi SDK access** - All agent capabilities, tools, and features
+- **No npm dependencies** - Uses `fetch` to call API directly
+- **Built-in tools** - bash, read, write, edit tools included
 - **Native event streaming** - Events flow through BEAM message passing
-- **Tool bridging** - Custom tools execute as Elixir functions
+- **Custom tools** - Define tools in Elixir, called from Claude
 - **OTP integration** - Agents are GenServers with supervision support
 
 > [!NOTE]
-> **Resource usage:** Each agent runs in a QuickBEAM runtime which uses ~530 KB JS heap + ~2.5 MB OS thread stack, plus the pi SDK loaded into memory. This is a dedicated OS thread per agent. For most applications running a handful of agents, this is negligible. If you need thousands of concurrent agents, consider using QuickBEAM's context pooling (not yet exposed in PiEx).
+> **Resource usage:** Each agent runs in a QuickBEAM runtime (~500 KB JS heap + ~2.5 MB OS thread stack). For most applications, this is negligible.
 
 ## License
 

@@ -92,6 +92,9 @@ defmodule PiEx.Config do
 
   @doc """
   Returns the path to the bridge script in priv.
+
+  The bridge is a minimal TypeScript file that uses fetch to call
+  the Anthropic API directly. No npm dependencies required.
   """
   @spec bridge_path() :: String.t()
   def bridge_path do
@@ -99,19 +102,14 @@ defmodule PiEx.Config do
   end
 
   @doc """
-  Returns the path to the node_modules directory.
-  """
-  @spec node_modules_path() :: String.t()
-  def node_modules_path do
-    Path.join(package_path(), "node_modules")
-  end
+  Checks if the bridge is available.
 
-  @doc """
-  Checks if the configured version is installed.
+  With the minimal bridge, no installation is needed - just checks
+  if the bridge.ts file exists in priv/js.
   """
   @spec installed?() :: boolean()
   def installed? do
-    File.exists?(node_modules_path())
+    File.exists?(bridge_path())
   end
 
   @doc """
