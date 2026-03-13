@@ -22,6 +22,7 @@ defmodule PiEx.MixProject do
   defp deps do
     [
       {:quickbeam, "~> 0.5.0"},
+      {:npm, "~> 0.3.0"},
       {:telemetry, "~> 1.0"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:mimic, "~> 1.7", only: :test}
