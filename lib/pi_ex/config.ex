@@ -16,7 +16,8 @@ defmodule PiEx.Config do
       Can also be set via `PI_EX_VERSION` environment variable.
 
     * `:cache_dir` - Directory to store downloaded npm packages.
-      Defaults to `~/.cache/pi_ex`. Can also be set via `PI_EX_CACHE_DIR`.
+      Follows XDG: defaults to `$XDG_CACHE_HOME/pi_ex` (or `~/.cache/pi_ex`).
+      Can also be set via `PI_EX_CACHE_DIR`.
 
   ## Version Resolution
 
@@ -41,7 +42,6 @@ defmodule PiEx.Config do
   """
 
   @default_version "0.57.1"
-  @default_cache_dir "~/.cache/pi_ex"
 
   @doc """
   Returns the configured pi coding agent version.
@@ -61,15 +61,25 @@ defmodule PiEx.Config do
 
   @doc """
   Returns the cache directory for npm packages.
+
+  Follows XDG Base Directory Specification:
+  1. `PI_EX_CACHE_DIR` environment variable
+  2. Application config `:cache_dir`
+  3. `$XDG_CACHE_HOME/pi_ex` (defaults to `~/.cache/pi_ex`)
   """
   @spec cache_dir() :: String.t()
   def cache_dir do
     dir =
       System.get_env("PI_EX_CACHE_DIR") ||
         Application.get_env(:pi_ex, :cache_dir) ||
-        @default_cache_dir
+        xdg_cache_dir()
 
     Path.expand(dir)
+  end
+
+  defp xdg_cache_dir do
+    xdg_cache_home = System.get_env("XDG_CACHE_HOME") || Path.expand("~/.cache")
+    Path.join(xdg_cache_home, "pi_ex")
   end
 
   @doc """
