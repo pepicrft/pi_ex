@@ -1,14 +1,17 @@
 defmodule PiEx.Installer do
   @moduledoc """
-  Handles installation of the pi coding agent SDK via npm_ex.
+  Handles installation of the pi coding agent SDK.
 
-  QuickBEAM handles bundling automatically via its `:script` option,
-  so we just need to install the npm package.
+  Uses `PiEx.TreeResolver` for dependency resolution (supports nested
+  node_modules for version conflicts) and `NPM.Registry`/`NPM.Cache`
+  for fetching packages.
   """
 
   require Logger
 
   alias PiEx.Config
+  alias PiEx.TreeResolver
+  alias PiEx.TreeLinker
 
   @doc """
   Ensures the pi SDK is installed.
@@ -77,15 +80,22 @@ defmodule PiEx.Installer do
   end
 
   defp install_npm_deps(package_dir) do
-    Logger.info("Installing npm dependencies...")
+    Logger.info("Resolving npm dependencies...")
 
-    original_cwd = File.cwd!()
+    deps = %{"@mariozechner/pi-coding-agent" => Config.version()}
 
-    try do
-      File.cd!(package_dir)
-      NPM.install()
-    after
-      File.cd!(original_cwd)
+    case TreeResolver.resolve(deps) do
+      {:ok, resolved} ->
+        total = map_size(resolved.hoisted) + map_size(resolved.nested)
+        nested = map_size(resolved.nested)
+        Logger.info("Resolved #{total} packages (#{nested} nested)")
+
+        Logger.info("Linking packages...")
+        node_modules = Path.join(package_dir, "node_modules")
+        TreeLinker.link(resolved, node_modules)
+
+      {:error, reason} ->
+        {:error, {:resolution_failed, reason}}
     end
   end
 
