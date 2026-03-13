@@ -218,6 +218,40 @@ MyAgent.start_link(
 )
 ```
 
+## Telemetry
+
+PiEx emits telemetry events for observability:
+
+| Event | Description |
+|-------|-------------|
+| `[:pi_ex, :session, :start]` | Session started |
+| `[:pi_ex, :session, :stop]` | Session stopped |
+| `[:pi_ex, :prompt, :start]` | Prompt started |
+| `[:pi_ex, :prompt, :stop]` | Prompt completed |
+| `[:pi_ex, :tool, :start]` | Tool execution started |
+| `[:pi_ex, :tool, :stop]` | Tool execution completed |
+| `[:pi_ex, :install, :start]` | SDK installation started |
+| `[:pi_ex, :install, :stop]` | SDK installation completed |
+
+Example handler:
+
+```elixir
+:telemetry.attach_many(
+  "my-handler",
+  [
+    [:pi_ex, :prompt, :stop],
+    [:pi_ex, :tool, :stop]
+  ],
+  fn event, measurements, metadata, _config ->
+    duration_ms = div(measurements.duration, 1_000_000)
+    Logger.info("#{inspect(event)} completed in #{duration_ms}ms")
+  end,
+  nil
+)
+```
+
+See `PiEx.Telemetry` for full documentation.
+
 ## How It Works
 
 PiEx uses [QuickBEAM](https://github.com/elixir-volt/quickbeam) to run the pi coding agent SDK inside a JavaScript runtime on the BEAM:
