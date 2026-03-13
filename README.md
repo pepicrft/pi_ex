@@ -261,6 +261,9 @@ PiEx uses [QuickBEAM](https://github.com/elixir-volt/quickbeam) to run the pi co
 - **Tool bridging** - Custom tools execute as Elixir functions
 - **OTP integration** - Agents are GenServers with supervision support
 
+> [!NOTE]
+> **Resource usage:** Each agent runs in a QuickBEAM runtime which uses ~530 KB JS heap + ~2.5 MB OS thread stack, plus the pi SDK loaded into memory. This is a dedicated OS thread per agent. For most applications running a handful of agents, this is negligible. If you need thousands of concurrent agents, consider using QuickBEAM's context pooling (not yet exposed in PiEx).
+
 ## License
 
 MIT
