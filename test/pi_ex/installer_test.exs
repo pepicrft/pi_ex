@@ -4,11 +4,7 @@ defmodule PiEx.InstallerTest do
 
   alias PiEx.Installer
 
-  # These tests require npm_ex to resolve the pi SDK dependencies.
-  # Currently blocked by a chalk version conflict in pi SDK's dependencies.
-  # TODO: Either wait for npm_ex to support multiple versions, or use npm/pnpm fallback.
   @moduletag :integration
-  @moduletag :skip
 
   describe "install/1" do
     @tag :tmp_dir
