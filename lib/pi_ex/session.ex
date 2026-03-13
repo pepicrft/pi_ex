@@ -2,8 +2,9 @@ defmodule PiEx.Session do
   @moduledoc """
   GenServer managing a pi coding agent session in QuickBEAM.
 
-  The session runs the pi SDK directly inside QuickBEAM with Node.js APIs
-  shimmed to call back to Elixir via `Beam.callSync()`.
+  The session runs the pi SDK directly inside QuickBEAM with:
+  - `apis: [:node]` for Node.js compatibility (fs, path, os, process, etc.)
+  - `:script` option to auto-bundle the bridge TypeScript with npm imports
   """
 
   use GenServer
@@ -244,217 +245,9 @@ defmodule PiEx.Session do
 
   defp start_runtime(state) do
     session_pid = self()
-    handlers = build_handlers(session_pid, state)
 
-    case File.read(Config.bundle_path()) do
-      {:ok, bundle} ->
-        preamble = build_preamble(state)
-
-        with {:ok, runtime} <- QuickBEAM.start(handlers: handlers, apis: [:browser]),
-             {:ok, _} <- QuickBEAM.eval(runtime, preamble <> bundle),
-             {:ok, _} <- QuickBEAM.call(runtime, "initSession", [state.config]) do
-          {:ok, runtime}
-        end
-
-      {:error, reason} ->
-        {:error, {:bundle_read_failed, reason}}
-    end
-  end
-
-  # Build the JavaScript preamble that defines Node.js API shims as globals
-  defp build_preamble(state) do
-    """
-    // Custom tool definitions
-    globalThis.__CUSTOM_TOOL_DEFS__ = #{JSON.encode!(Enum.map(state.custom_tools, &Tool.to_js/1))};
-
-    // Process shim
-    globalThis.process = {
-      env: {},
-      cwd: () => '#{escape_js(state.cwd)}',
-      platform: '#{os_platform()}',
-      arch: '#{os_arch()}'
-    };
-
-    // ---- fs shim ----
-    globalThis.__shim_fs = {
-      readFileSync: (path, opts) => {
-        const enc = typeof opts === 'string' ? opts : opts?.encoding;
-        const r = Beam.callSync('fs:readFileSync', path, enc || null);
-        if (r.error) throw new Error(r.error);
-        return r.data;
-      },
-      writeFileSync: (path, data) => {
-        const r = Beam.callSync('fs:writeFileSync', path, data);
-        if (r.error) throw new Error(r.error);
-      },
-      existsSync: (path) => Beam.callSync('fs:existsSync', path),
-      mkdirSync: (path, opts) => {
-        const r = Beam.callSync('fs:mkdirSync', path, opts?.recursive || false);
-        if (r.error) throw new Error(r.error);
-      },
-      readdirSync: (path) => {
-        const r = Beam.callSync('fs:readdirSync', path);
-        if (r.error) throw new Error(r.error);
-        return r.data;
-      },
-      statSync: (path) => {
-        const r = Beam.callSync('fs:statSync', path);
-        if (r.error) throw new Error(r.error);
-        return {
-          isFile: () => r.data.type === 'file',
-          isDirectory: () => r.data.type === 'directory',
-          isSymbolicLink: () => r.data.type === 'symlink',
-          size: r.data.size,
-          mtime: new Date(r.data.mtime)
-        };
-      },
-      lstatSync: function(p) { return this.statSync(p); },
-      unlinkSync: (path) => {
-        const r = Beam.callSync('fs:unlinkSync', path);
-        if (r.error) throw new Error(r.error);
-      },
-      rmSync: (path, opts) => {
-        const r = Beam.callSync('fs:rmSync', path, opts?.recursive || false);
-        if (r.error) throw new Error(r.error);
-      },
-      realpathSync: (path) => {
-        const r = Beam.callSync('fs:realpathSync', path);
-        if (r.error) throw new Error(r.error);
-        return r.data;
-      },
-      renameSync: (old, newPath) => {
-        const r = Beam.callSync('fs:renameSync', old, newPath);
-        if (r.error) throw new Error(r.error);
-      },
-      copyFileSync: (src, dest) => {
-        const r = Beam.callSync('fs:copyFileSync', src, dest);
-        if (r.error) throw new Error(r.error);
-      },
-      readFile: async function(p, o) { return this.readFileSync(p, o); },
-      writeFile: async function(p, d, o) { return this.writeFileSync(p, d, o); },
-      constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 }
-    };
-
-    // ---- path shim (pure JS) ----
-    globalThis.__shim_path = (() => {
-      const sep = '/';
-      const delimiter = ':';
-      const join = (...p) => p.filter(x => x && x.length).join('/').replace(/\\/+/g, '/');
-      const normalize = (p) => {
-        if (!p) return '.';
-        const abs = p.startsWith('/');
-        const parts = p.split('/').filter(x => x && x !== '.');
-        const norm = [];
-        for (const x of parts) {
-          if (x === '..') { if (norm.length && norm[norm.length-1] !== '..') norm.pop(); else if (!abs) norm.push('..'); }
-          else norm.push(x);
-        }
-        let r = norm.join('/');
-        if (abs) r = '/' + r;
-        return r || (abs ? '/' : '.');
-      };
-      const resolve = (...parts) => {
-        let r = '';
-        for (let i = parts.length - 1; i >= 0; i--) {
-          const p = parts[i];
-          if (!p) continue;
-          r = p + (r ? '/' + r : '');
-          if (p.startsWith('/')) break;
-        }
-        return normalize(r || '/');
-      };
-      const basename = (p, ext) => { let b = p.split('/').pop() || ''; if (ext && b.endsWith(ext)) b = b.slice(0, -ext.length); return b; };
-      const dirname = (p) => { const parts = p.split('/'); parts.pop(); return parts.join('/') || (p.startsWith('/') ? '/' : '.'); };
-      const extname = (p) => { const b = basename(p); const i = b.lastIndexOf('.'); return i <= 0 ? '' : b.slice(i); };
-      const isAbsolute = (p) => p.startsWith('/');
-      const relative = (from, to) => {
-        const fp = resolve(from).split('/').filter(Boolean);
-        const tp = resolve(to).split('/').filter(Boolean);
-        let c = 0;
-        for (let i = 0; i < Math.min(fp.length, tp.length); i++) { if (fp[i] === tp[i]) c++; else break; }
-        return [...Array(fp.length - c).fill('..'), ...tp.slice(c)].join('/') || '.';
-      };
-      const parse = (p) => { const d = dirname(p), b = basename(p), e = extname(p); return { root: p.startsWith('/') ? '/' : '', dir: d, base: b, ext: e, name: b.slice(0, b.length - e.length) }; };
-      const format = (o) => (o.dir || o.root || '') + '/' + (o.base || (o.name || '') + (o.ext || ''));
-      const posix = { sep, delimiter, join, resolve, normalize, basename, dirname, extname, isAbsolute, relative, parse, format };
-      return { sep, delimiter, join, resolve, normalize, basename, dirname, extname, isAbsolute, relative, parse, format, posix, default: posix };
-    })();
-
-    // ---- os shim ----
-    globalThis.__shim_os = {
-      platform: () => Beam.callSync('os:platform'),
-      arch: () => Beam.callSync('os:arch'),
-      homedir: () => Beam.callSync('os:homedir'),
-      tmpdir: () => Beam.callSync('os:tmpdir'),
-      hostname: () => Beam.callSync('os:hostname'),
-      type: () => { const p = Beam.callSync('os:platform'); return p === 'darwin' ? 'Darwin' : p === 'linux' ? 'Linux' : p; },
-      cpus: () => Array(Beam.callSync('os:cpuCount')).fill({ model: 'unknown', speed: 0 }),
-      totalmem: () => Beam.callSync('os:totalmem'),
-      freemem: () => Beam.callSync('os:freemem'),
-      uptime: () => Beam.callSync('os:uptime'),
-      release: () => Beam.callSync('os:release'),
-      userInfo: () => ({ username: Beam.callSync('os:username'), homedir: Beam.callSync('os:homedir'), shell: Beam.callSync('os:shell') }),
-      EOL: '\\n',
-      endianness: () => 'LE',
-      networkInterfaces: () => ({})
-    };
-
-    // ---- child_process shim ----
-    globalThis.__shim_child_process = {
-      execSync: (cmd, opts = {}) => {
-        const r = Beam.callSync('child_process:execSync', cmd, opts.cwd || process.cwd());
-        if (r.error) { const e = new Error(r.error); e.status = r.status; throw e; }
-        return r.stdout;
-      },
-      spawnSync: (cmd, args = [], opts = {}) => {
-        const r = Beam.callSync('child_process:execSync', [cmd, ...args].join(' '), opts.cwd || process.cwd());
-        return { status: r.status || 0, stdout: r.stdout || '', stderr: r.stderr || '', error: r.error ? new Error(r.error) : null };
-      },
-      spawn: () => { throw new Error('spawn not supported'); },
-      exec: (cmd, opts, cb) => {
-        if (typeof opts === 'function') { cb = opts; opts = {}; }
-        try { const r = globalThis.__shim_child_process.execSync(cmd, opts); cb(null, r, ''); }
-        catch (e) { cb(e, '', ''); }
-      }
-    };
-
-    // ---- events shim ----
-    globalThis.__shim_events = (() => {
-      class EventEmitter {
-        constructor() { this._events = new Map(); }
-        on(e, l) { if (!this._events.has(e)) this._events.set(e, []); this._events.get(e).push(l); return this; }
-        addListener(e, l) { return this.on(e, l); }
-        once(e, l) { const w = (...a) => { this.off(e, w); l.apply(this, a); }; w.listener = l; return this.on(e, w); }
-        off(e, l) { return this.removeListener(e, l); }
-        removeListener(e, l) { const arr = this._events.get(e); if (arr) { const i = arr.findIndex(x => x === l || x.listener === l); if (i !== -1) arr.splice(i, 1); } return this; }
-        removeAllListeners(e) { if (e) this._events.delete(e); else this._events.clear(); return this; }
-        emit(e, ...a) { const arr = this._events.get(e); if (arr) { for (const fn of [...arr]) fn.apply(this, a); return true; } return false; }
-        listeners(e) { return this._events.get(e) || []; }
-        listenerCount(e) { return this.listeners(e).length; }
-        eventNames() { return [...this._events.keys()]; }
-        setMaxListeners() { return this; }
-        getMaxListeners() { return 10; }
-      }
-      return { EventEmitter, default: EventEmitter };
-    })();
-
-    // ---- readline shim ----
-    globalThis.__shim_readline = (() => {
-      const EventEmitter = globalThis.__shim_events.EventEmitter;
-      class Interface extends EventEmitter {
-        constructor(opts) { super(); this.input = opts.input; this.output = opts.output; }
-        close() { this.emit('close'); }
-        pause() { return this; }
-        resume() { return this; }
-      }
-      return { Interface, createInterface: (opts) => new Interface(opts) };
-    })();
-    """
-  end
-
-  defp build_handlers(session_pid, state) do
-    %{
-      # SDK events
+    handlers = %{
+      # SDK events forwarded to Elixir
       "pi:event" => fn [event] ->
         send(session_pid, {:pi_event, event})
         :ok
@@ -463,101 +256,35 @@ defmodule PiEx.Session do
       # Custom tool execution
       "tool:execute" => fn [name, params, ctx] ->
         execute_tool(name, params, ctx, state.custom_tools, state.session_id)
-      end,
-
-      # File system handlers
-      "fs:readFileSync" => fn [path, encoding] ->
-        case File.read(path) do
-          {:ok, data} -> %{"data" => if(encoding, do: data, else: Base.encode64(data))}
-          {:error, r} -> %{"error" => to_string(r)}
-        end
-      end,
-      "fs:writeFileSync" => fn [path, data] ->
-        case File.write(path, data) do
-          :ok -> %{"ok" => true}
-          {:error, r} -> %{"error" => to_string(r)}
-        end
-      end,
-      "fs:existsSync" => fn [path] -> File.exists?(path) end,
-      "fs:mkdirSync" => fn [path, recursive] ->
-        case if(recursive, do: File.mkdir_p(path), else: File.mkdir(path)) do
-          :ok -> %{"ok" => true}
-          {:error, r} -> %{"error" => to_string(r)}
-        end
-      end,
-      "fs:readdirSync" => fn [path] ->
-        case File.ls(path) do
-          {:ok, files} -> %{"data" => files}
-          {:error, r} -> %{"error" => to_string(r)}
-        end
-      end,
-      "fs:statSync" => fn [path] ->
-        case File.stat(path) do
-          {:ok, s} ->
-            type = case s.type do
-              :regular -> "file"
-              :directory -> "directory"
-              :symlink -> "symlink"
-              other -> to_string(other)
-            end
-            %{"data" => %{"type" => type, "size" => s.size, "mtime" => to_iso8601(s.mtime)}}
-          {:error, r} -> %{"error" => to_string(r)}
-        end
-      end,
-      "fs:unlinkSync" => fn [path] ->
-        case File.rm(path) do
-          :ok -> %{"ok" => true}
-          {:error, r} -> %{"error" => to_string(r)}
-        end
-      end,
-      "fs:rmSync" => fn [path, recursive] ->
-        case if(recursive, do: File.rm_rf(path), else: File.rm(path)) do
-          :ok -> %{"ok" => true}
-          {:ok, _} -> %{"ok" => true}
-          {:error, r} -> %{"error" => to_string(r)}
-          {:error, r, _} -> %{"error" => to_string(r)}
-        end
-      end,
-      "fs:realpathSync" => fn [path] -> %{"data" => Path.expand(path)} end,
-      "fs:renameSync" => fn [old, new] ->
-        case File.rename(old, new) do
-          :ok -> %{"ok" => true}
-          {:error, r} -> %{"error" => to_string(r)}
-        end
-      end,
-      "fs:copyFileSync" => fn [src, dest] ->
-        case File.cp(src, dest) do
-          :ok -> %{"ok" => true}
-          {:error, r} -> %{"error" => to_string(r)}
-        end
-      end,
-
-      # OS handlers
-      "os:platform" => fn [] -> os_platform() end,
-      "os:arch" => fn [] -> os_arch() end,
-      "os:homedir" => fn [] -> System.user_home!() end,
-      "os:tmpdir" => fn [] -> System.tmp_dir!() end,
-      "os:hostname" => fn [] -> :inet.gethostname() |> elem(1) |> to_string() end,
-      "os:cpuCount" => fn [] -> System.schedulers_online() end,
-      "os:totalmem" => fn [] -> :erlang.memory(:total) end,
-      "os:freemem" => fn [] -> :erlang.memory(:total) - :erlang.memory(:processes_used) end,
-      "os:uptime" => fn [] -> :erlang.statistics(:wall_clock) |> elem(0) |> div(1000) end,
-      "os:release" => fn [] -> :erlang.system_info(:otp_release) |> to_string() end,
-      "os:username" => fn [] -> System.get_env("USER", "unknown") end,
-      "os:shell" => fn [] -> System.get_env("SHELL", "/bin/sh") end,
-
-      # Child process handler
-      "child_process:execSync" => fn [cmd, cwd] ->
-        try do
-          case System.cmd("sh", ["-c", cmd], cd: cwd, stderr_to_stdout: true) do
-            {out, 0} -> %{"stdout" => out, "status" => 0}
-            {out, status} -> %{"stdout" => out, "status" => status, "error" => "exit #{status}"}
-          end
-        rescue
-          e -> %{"error" => Exception.message(e), "status" => 1}
-        end
       end
     }
+
+    # Inject custom tool definitions and config before the bridge runs
+    preamble = """
+    globalThis.__CUSTOM_TOOL_DEFS__ = #{JSON.encode!(Enum.map(state.custom_tools, &Tool.to_js/1))};
+    globalThis.__PI_EX_CONFIG__ = #{JSON.encode!(state.config)};
+    """
+
+    # QuickBEAM will:
+    # 1. Provide Node.js APIs via apis: [:node]
+    # 2. Auto-bundle bridge.ts with npm imports resolved
+    # 3. Execute the script in the runtime
+    {:ok, runtime} = QuickBEAM.start(
+      apis: [:node],
+      script: Config.bridge_path(),
+      handlers: handlers,
+      cwd: state.cwd
+    )
+
+    # Inject preamble and initialize session
+    with {:ok, _} <- QuickBEAM.eval(runtime, preamble),
+         {:ok, _} <- QuickBEAM.call(runtime, "initSession", [state.config]) do
+      {:ok, runtime}
+    else
+      error ->
+        QuickBEAM.stop(runtime)
+        error
+    end
   end
 
   defp execute_tool(name, params, context, tools, session_id) do
@@ -633,33 +360,4 @@ defmodule PiEx.Session do
   defp update_streaming_state(state, %Event.AgentEnd{}), do: %{state | streaming: false}
   defp update_streaming_state(state, %Event.Error{}), do: %{state | streaming: false}
   defp update_streaming_state(state, _), do: state
-
-  defp os_platform do
-    case :os.type() do
-      {:unix, :darwin} -> "darwin"
-      {:unix, :linux} -> "linux"
-      {:win32, _} -> "win32"
-      {_, os} -> to_string(os)
-    end
-  end
-
-  defp os_arch do
-    :erlang.system_info(:system_architecture)
-    |> to_string()
-    |> String.split("-")
-    |> hd()
-    |> case do
-      "aarch64" -> "arm64"
-      "x86_64" -> "x64"
-      arch -> arch
-    end
-  end
-
-  defp escape_js(str), do: String.replace(str, "'", "\\'")
-
-  defp to_iso8601({{y, m, d}, {h, min, s}}) do
-    NaiveDateTime.new!(y, m, d, h, min, s)
-    |> DateTime.from_naive!("Etc/UTC")
-    |> DateTime.to_iso8601()
-  end
 end

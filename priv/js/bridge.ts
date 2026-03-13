@@ -1,8 +1,8 @@
 /**
  * PiEx Bridge - Runs the pi SDK in QuickBEAM with event subscriptions
  * 
- * This bridge imports the pi SDK and exposes functions to Elixir.
- * Events are forwarded via Beam.callSync('pi:event', event).
+ * QuickBEAM provides Node.js APIs (fs, path, os, process) via apis: [:node].
+ * Events are forwarded to Elixir via Beam.callSync('pi:event', event).
  * Custom tools call back to Elixir via Beam.call('tool:execute', ...).
  */
 
@@ -21,6 +21,24 @@ declare const Beam: {
   callSync(handler: string, ...args: unknown[]): unknown;
 };
 
+// Injected by Elixir preamble
+declare const __CUSTOM_TOOL_DEFS__: Array<{
+  name: string;
+  label: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}>;
+
+declare const __PI_EX_CONFIG__: {
+  apiKey?: string;
+  provider?: string;
+  model?: string;
+  thinkingLevel?: string;
+  cwd?: string;
+  systemPrompt?: string;
+  sessionId?: string;
+};
+
 let session: AgentSession | null = null;
 
 interface SessionConfig {
@@ -32,16 +50,6 @@ interface SessionConfig {
   systemPrompt?: string;
   sessionId?: string;
 }
-
-interface CustomToolDef {
-  name: string;
-  label: string;
-  description: string;
-  parameters: Record<string, unknown>;
-}
-
-// Custom tool definitions injected by Elixir
-declare const __CUSTOM_TOOL_DEFS__: CustomToolDef[];
 
 async function initSession(config: SessionConfig): Promise<{ sessionId: string }> {
   const authStorage = AuthStorage.create();
@@ -175,4 +183,3 @@ async function compact(instructions?: string): Promise<unknown> {
 (globalThis as any).setThinkingLevel = setThinkingLevel;
 (globalThis as any).newSession = newSession;
 (globalThis as any).compact = compact;
-(globalThis as any).bridgeReady = true;

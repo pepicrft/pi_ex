@@ -1,9 +1,9 @@
 defmodule PiEx.Installer do
   @moduledoc """
-  Handles installation and bundling of the pi coding agent SDK.
+  Handles installation of the pi coding agent SDK via npm_ex.
 
-  Uses `npm_ex` to install dependencies without requiring Node.js for npm operations,
-  then bundles with esbuild (which does require Node.js).
+  QuickBEAM handles bundling automatically via its `:script` option,
+  so we just need to install the npm package.
   """
 
   require Logger
@@ -11,7 +11,7 @@ defmodule PiEx.Installer do
   alias PiEx.Config
 
   @doc """
-  Ensures the pi SDK is installed and bundled.
+  Ensures the pi SDK is installed.
   """
   @spec ensure_installed!() :: :ok
   def ensure_installed! do
@@ -33,10 +33,9 @@ defmodule PiEx.Installer do
 
   @spec install(String.t()) :: :ok | {:error, term()}
   def install(version) do
-    package_dir = Path.join(Config.cache_dir(), "pi-coding-agent-#{version}")
-    bundle_path = Path.join(package_dir, "bridge.bundle.js")
+    package_dir = Config.package_path()
 
-    if File.exists?(bundle_path) do
+    if Config.installed?() do
       Logger.debug("Pi SDK #{version} already installed")
       :ok
     else
@@ -51,9 +50,7 @@ defmodule PiEx.Installer do
 
     with :ok <- copy_bridge_file(package_dir),
          :ok <- create_package_json(package_dir, version),
-         :ok <- install_npm_deps(package_dir),
-         :ok <- create_bundle_script(package_dir),
-         :ok <- run_bundle(package_dir) do
+         :ok <- install_npm_deps(package_dir) do
       Logger.info("Successfully installed pi coding agent #{version}")
       :ok
     else
@@ -84,8 +81,7 @@ defmodule PiEx.Installer do
       "private" => true,
       "type" => "module",
       "dependencies" => %{
-        "@mariozechner/pi-coding-agent" => version,
-        "esbuild" => "^0.25.0"
+        "@mariozechner/pi-coding-agent" => version
       }
     }
 
@@ -97,7 +93,6 @@ defmodule PiEx.Installer do
   defp install_npm_deps(package_dir) do
     Logger.info("Installing npm dependencies...")
 
-    # Use npm_ex - it reads package.json from cwd
     original_cwd = File.cwd!()
 
     try do
@@ -105,81 +100,6 @@ defmodule PiEx.Installer do
       NPM.install()
     after
       File.cd!(original_cwd)
-    end
-  end
-
-  defp create_bundle_script(package_dir) do
-    # Shims redirect Node.js imports to globals defined by Elixir at runtime
-    # The globals use Beam.callSync() which QuickBEAM provides
-    script = ~S"""
-    import * as esbuild from 'esbuild';
-
-    // Plugin that redirects Node.js imports to globals (defined by Elixir preamble)
-    const shimPlugin = {
-      name: 'node-shims',
-      setup(build) {
-        const nodeModules = ['fs', 'path', 'os', 'child_process', 'events', 'readline'];
-
-        for (const mod of nodeModules) {
-          // Match both 'fs' and 'node:fs'
-          build.onResolve({ filter: new RegExp(`^(node:)?${mod}$`) }, args => ({
-            path: mod,
-            namespace: 'shim-global',
-          }));
-        }
-
-        // Return a module that re-exports the global
-        build.onLoad({ filter: /.*/, namespace: 'shim-global' }, args => ({
-          contents: `module.exports = globalThis.__shim_${args.path};`,
-          loader: 'js',
-        }));
-      }
-    };
-
-    await esbuild.build({
-      entryPoints: ['bridge.ts'],
-      bundle: true,
-      outfile: 'bridge.bundle.js',
-      format: 'iife',
-      platform: 'neutral',
-      target: 'es2020',
-      plugins: [shimPlugin],
-      define: {
-        'process.env.NODE_ENV': '"production"',
-      },
-      external: [
-        'node:crypto', 'node:http', 'node:https', 'node:net', 'node:tls',
-        'node:stream', 'node:buffer', 'node:util', 'node:url', 'node:zlib',
-        'crypto', 'http', 'https', 'net', 'tls', 'stream', 'buffer', 'util', 'url', 'zlib',
-      ],
-      logLevel: 'warning',
-    });
-
-    console.log('Bundle created successfully');
-    """
-
-    path = Path.join(package_dir, "bundle.mjs")
-    File.write!(path, script)
-    :ok
-  end
-
-  defp run_bundle(package_dir) do
-    Logger.info("Bundling SDK...")
-
-    case System.cmd("node", ["bundle.mjs"], cd: package_dir, stderr_to_stdout: true) do
-      {_output, 0} ->
-        bundle_path = Path.join(package_dir, "bridge.bundle.js")
-
-        if File.exists?(bundle_path) do
-          size = File.stat!(bundle_path).size
-          Logger.info("SDK bundle created: #{div(size, 1024)} KB")
-          :ok
-        else
-          {:error, :bundle_not_created}
-        end
-
-      {output, code} ->
-        {:error, {:bundle_failed, code, output}}
     end
   end
 

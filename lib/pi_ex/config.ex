@@ -81,11 +81,11 @@ defmodule PiEx.Config do
   end
 
   @doc """
-  Returns the path to the bundled SDK.
+  Returns the path to the bridge script.
   """
-  @spec bundle_path() :: String.t()
-  def bundle_path do
-    Path.join(package_path(), "bridge.bundle.js")
+  @spec bridge_path() :: String.t()
+  def bridge_path do
+    Path.join(package_path(), "bridge.ts")
   end
 
   @doc """
@@ -97,11 +97,11 @@ defmodule PiEx.Config do
   end
 
   @doc """
-  Checks if the configured version is installed and bundled.
+  Checks if the configured version is installed.
   """
   @spec installed?() :: boolean()
   def installed? do
-    File.exists?(bundle_path())
+    File.exists?(bridge_path()) and File.exists?(entry_point())
   end
 
   @doc """
